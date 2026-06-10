@@ -601,7 +601,7 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "check-if-email-exists"
-version = "0.11.6"
+version = "0.11.7"
 dependencies = [
  "anyhow",
  "async-recursion",
@@ -633,7 +633,7 @@ dependencies = [
 
 [[package]]
 name = "check-if-email-exists-cli"
-version = "0.11.6"
+version = "0.11.7"
 dependencies = [
  "anyhow",
  "check-if-email-exists",
@@ -2546,15 +2546,14 @@ checksum = "d75b0bedcc4fe52caa0e03d9f1151a323e4aa5e2d78ba3580400cd3c9e2bc4bc"
 
 [[package]]
 name = "openssl"
-version = "0.10.69"
+version = "0.10.80"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5e534d133a060a3c19daec1eb3e98ec6f4685978834f2dbadfe2ec215bab64e"
+checksum = "a45fa2aa886c42762255da344f0a0d313e254066c46aad76f300c3d3da62d967"
 dependencies = [
  "bitflags 2.6.0",
  "cfg-if",
  "foreign-types",
  "libc",
- "once_cell",
  "openssl-macros",
  "openssl-sys",
 ]
@@ -2587,9 +2586,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.104"
+version = "0.9.116"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45abf306cbf99debc8195b66b7346498d7b10c210de50418b5ccd7ceba08c741"
+checksum = "f28a22dc7140cda5f096e5e7724a6962ca81a7f8bfd2979f9b18c11af56318c4"
 dependencies = [
  "cc",
  "libc",
@@ -3062,7 +3061,7 @@ dependencies = [
 
 [[package]]
 name = "reacher_backend"
-version = "0.11.6"
+version = "0.11.7"
 dependencies = [
  "anyhow",
  "async-smtp",
