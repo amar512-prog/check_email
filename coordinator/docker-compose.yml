@@ -10,6 +10,18 @@ services:
       - coordinator_data:/app/backend/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - reacher-local
 
 volumes:
   coordinator_data:
+
+networks:
+  # Joins the local Reacher worker stack's network so the coordinator can
+  # reach the worker as http://reacher-check-email:8080 without any host
+  # port. Remove this network (and the service's reference to it) when the
+  # coordinator runs on a box without a local worker.
+  reacher-local:
+    name: reacher-local
+    external: true
