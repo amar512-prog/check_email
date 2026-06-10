@@ -30,6 +30,9 @@ use super::{
 	error::{BulkError, CsvError},
 };
 use csv_helper::{CsvWrapper, JobResultCsvResponse};
+use crate::config::BackendConfig;
+use crate::http::check_header;
+use std::sync::Arc;
 
 mod csv_helper;
 
@@ -236,10 +239,12 @@ async fn job_result_csv(
 }
 
 pub fn get_bulk_job_result(
+	config: Arc<BackendConfig>,
 	o: Option<Pool<Postgres>>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
 	warp::path!("v0" / "bulk" / i32 / "results")
 		.and(warp::get())
+		.and(check_header(config))
 		.and(with_db(o))
 		.and(warp::query::<JobResultRequest>())
 		.and_then(job_result)

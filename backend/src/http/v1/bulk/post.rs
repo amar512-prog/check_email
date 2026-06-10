@@ -61,6 +61,17 @@ async fn http_handler(
 	if body.input.is_empty() {
 		return Err(ReacherResponseError::new(StatusCode::BAD_REQUEST, "Empty input").into());
 	}
+	if body.input.len() > config.max_bulk_job_size {
+		return Err(ReacherResponseError::new(
+			StatusCode::PAYLOAD_TOO_LARGE,
+			format!(
+				"Bulk job size {} exceeds the maximum of {} emails",
+				body.input.len(),
+				config.max_bulk_job_size
+			),
+		)
+		.into());
+	}
 
 	// create job entry
 	let rec = sqlx::query!(

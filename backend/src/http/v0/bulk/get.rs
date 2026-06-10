@@ -24,6 +24,9 @@ use tracing::error;
 use warp::Filter;
 
 use super::{db::with_db, error::BulkError};
+use crate::config::BackendConfig;
+use crate::http::check_header;
+use std::sync::Arc;
 
 /// NOTE: Type conversions from postgres to rust types
 /// are according to the table given by
@@ -160,10 +163,12 @@ async fn job_status(
 }
 
 pub fn get_bulk_job_status(
+	config: Arc<BackendConfig>,
 	o: Option<Pool<Postgres>>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
 	warp::path!("v0" / "bulk" / i32)
 		.and(warp::get())
+		.and(check_header(config))
 		.and(with_db(o))
 		.and_then(job_status)
 		// View access logs by setting `RUST_LOG=reacher`.

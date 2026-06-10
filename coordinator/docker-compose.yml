@@ -1,0 +1,15 @@
+services:
+  coordinator:
+    build: .
+    container_name: mailcheck-coordinator
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - coordinator_data:/app/backend/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  coordinator_data:

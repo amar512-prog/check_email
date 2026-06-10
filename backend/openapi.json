@@ -2,7 +2,7 @@
 	"openapi": "3.0.0",
 	"info": {
 		"title": "Reacher",
-		"version": "0.11.0",
+		"version": "0.11.6",
 		"description": "### What is Reacher?\n\nReacher is a robust, open-source email verification API service available as both a SaaS and self-hosted solution.",
 		"license": {
 			"name": "AGPL-3.0 OR Commercial",
@@ -17,8 +17,8 @@
 	},
 	"servers": [
 		{
-			"url": "https://api.reacher.email",
-			"description": "Reacher Production"
+			"url": "/reacher-api",
+			"description": "Local authenticated Reacher backend"
 		}
 	],
 	"paths": {
@@ -44,7 +44,7 @@
 				},
 				"description": "Perform a comprehensive verification of an email address. This endpoint supersedes the previous `/v0/check_email` endpoint, maintaining the same input and output format. Unlike the `/v0/check_email` endpoint, the new `/v1/check_email` endpoint queues the email for verification, and the Reacher server processes the queue based on its configuration settings such as throttle and concurrency.",
 				"requestBody": {
-					"description": "Request object containing all parameters necessary for an email verification.",
+					"description": "Provide the email address to verify.",
 					"content": {
 						"application/json": {
 							"schema": {
@@ -68,7 +68,9 @@
 							"application/json": {
 								"schema": {
 									"type": "object",
-									"required": ["job_id"],
+									"required": [
+										"job_id"
+									],
 									"properties": {
 										"job_id": {
 											"type": "integer",
@@ -81,6 +83,9 @@
 								}
 							}
 						}
+					},
+					"413": {
+						"description": "The number of emails in the request exceeds max_bulk_job_size (default 10000)."
 					}
 				},
 				"operationId": "post-v1-bulk",
@@ -93,7 +98,9 @@
 						"application/json": {
 							"schema": {
 								"type": "object",
-								"required": ["input"],
+								"required": [
+									"input"
+								],
 								"properties": {
 									"input": {
 										"type": "array",
@@ -231,7 +238,10 @@
 											"x-stoplight": {
 												"id": "tsw5sp5cxe7ad"
 											},
-											"enum": ["Running", "Completed"],
+											"enum": [
+												"Running",
+												"Completed"
+											],
 											"description": "The status of the job, either \"Running\" or \"Completed\"."
 										}
 									}
@@ -268,7 +278,9 @@
 							"application/json": {
 								"schema": {
 									"type": "object",
-									"required": ["results"],
+									"required": [
+										"results"
+									],
 									"properties": {
 										"results": {
 											"$ref": "#/components/schemas/CheckEmailOutput"
@@ -333,17 +345,6 @@
 					},
 					"description": "Request object containing all parameters necessary for an email verification."
 				},
-				"parameters": [
-					{
-						"schema": {
-							"type": "string"
-						},
-						"in": "header",
-						"name": "Authorization",
-						"description": "Your personal Reacher API key",
-						"required": true
-					}
-				],
 				"x-stoplight": {
 					"id": "9cw3vilj3q88h"
 				},
@@ -360,43 +361,16 @@
 					"id": "834398a8ce480"
 				},
 				"type": "object",
-				"description": "A request object to perform an email verification. The `to_email` field is required, all other fields are optional.",
-				"required": ["to_email"],
+				"description": "The email address to verify.",
+				"required": [
+					"to_email"
+				],
 				"properties": {
-					"from_email": {
-						"type": "string",
-						"description": "In the SMTP connection, the FROM email address."
-					},
 					"to_email": {
 						"type": "string",
-						"description": "The email address to check."
-					},
-					"hello_name": {
-						"type": "string",
-						"description": "In the SMTP connection, the EHLO hostname."
-					},
-					"proxy": {
-						"$ref": "#/components/schemas/CheckEmailInputProxy"
-					},
-					"smtp_port": {
-						"type": "number",
-						"description": "SMTP port to use for email validation. Defaults to 25, but 465, 587, and 2525 are sometimes also used."
-					},
-					"gmail_verif_method": {
-						"$ref": "#/components/schemas/GmailVerifMethod"
-					},
-					"hotmailb2b_verif_method": {
-						"$ref": "#/components/schemas/HotmailB2BVerifMethod"
-					},
-					"hotmailb2c_verif_method": {
-						"$ref": "#/components/schemas/HotmailB2CVerifMethod"
-					},
-					"yahoo_verif_method": {
-						"$ref": "#/components/schemas/YahooVerifMethod"
-					},
-					"check_gravatar": {
-						"type": "boolean",
-						"description": "Whether to check if a Gravatar image exists for the given email."
+						"format": "email",
+						"description": "The email address to verify.",
+						"example": "amar@basisvps.com"
 					}
 				}
 			},
@@ -497,14 +471,23 @@
 			"Reachable": {
 				"type": "string",
 				"title": "Reachable",
-				"enum": ["invalid", "unknown", "safe", "risky"],
+				"enum": [
+					"invalid",
+					"unknown",
+					"safe",
+					"risky"
+				],
 				"description": "An enumeration describing the confidence level that the recipient address is valid: `safe`, `risky`, `invalid`, or `unknown`. Refer to our FAQ for detailed definitions: https://help.reacher.email/email-attributes-inside-json."
 			},
 			"MiscDetails": {
 				"title": "MiscDetails",
 				"type": "object",
 				"description": "Additional information about the email account.",
-				"required": ["is_disposable", "is_role_account", "is_b2c"],
+				"required": [
+					"is_disposable",
+					"is_role_account",
+					"is_b2c"
+				],
 				"properties": {
 					"is_disposable": {
 						"type": "boolean",
@@ -543,7 +526,10 @@
 						}
 					}
 				},
-				"required": ["accepts_mail", "records"],
+				"required": [
+					"accepts_mail",
+					"records"
+				],
 				"description": "Details about the mail server's MX records."
 			},
 			"SmtpDetails": {
@@ -598,7 +584,11 @@
 						"description": "The username part of the email address."
 					}
 				},
-				"required": ["domain", "is_valid_syntax", "username"]
+				"required": [
+					"domain",
+					"is_valid_syntax",
+					"username"
+				]
 			},
 			"CoreError": {
 				"title": "CoreError",
@@ -617,12 +607,19 @@
 						"description": "A human-readable description of the error."
 					}
 				},
-				"required": ["type", "message"]
+				"required": [
+					"type",
+					"message"
+				]
 			},
 			"YahooVerifMethod": {
 				"type": "string",
 				"title": "YahooVerifMethod",
-				"enum": ["Api", "Headless", "Smtp"],
+				"enum": [
+					"Api",
+					"Headless",
+					"Smtp"
+				],
 				"description": "Enumeration describing the method used to verify Yahoo emails."
 			},
 			"HotmailB2BVerifMethod": {
@@ -631,7 +628,9 @@
 					"id": "ntdugsleyotut"
 				},
 				"title": "HotmailB2BVerifMethod",
-				"enum": ["Smtp"],
+				"enum": [
+					"Smtp"
+				],
 				"description": "Enumeration describing the method used to verify Hotmail B2B emails."
 			},
 			"HotmailB2CVerifMethod": {
@@ -640,7 +639,10 @@
 					"id": "cuc5bj6ra2t0i"
 				},
 				"title": "HotmailB2CVerifMethod",
-				"enum": ["Smtp", "Headless"],
+				"enum": [
+					"Smtp",
+					"Headless"
+				],
 				"description": "Enumeration describing the method used to verify Hotmail B2C emails."
 			},
 			"GmailVerifMethod": {
@@ -649,7 +651,9 @@
 					"id": "xo5r48yhtxiwr"
 				},
 				"title": "GmailVerifMethod",
-				"enum": ["Smtp"],
+				"enum": [
+					"Smtp"
+				],
 				"description": "Enumeration describing the method used to verify Gmail emails.",
 				"x-internal": false
 			},
@@ -682,7 +686,10 @@
 						"description": "Password for proxy authentication."
 					}
 				},
-				"required": ["host", "port"],
+				"required": [
+					"host",
+					"port"
+				],
 				"description": "Proxy configuration for email verification."
 			},
 			"DebugDetails": {
@@ -745,7 +752,10 @@
 						"description": "Duration in nanoseconds."
 					}
 				},
-				"required": ["secs", "nanos"]
+				"required": [
+					"secs",
+					"nanos"
+				]
 			},
 			"DebugDetailsSmtp": {
 				"title": "DebugDetailsSmtp",
@@ -767,13 +777,20 @@
 				},
 				"type": "object",
 				"description": "The method used for email verification.",
-				"required": ["type"],
+				"required": [
+					"type"
+				],
 				"properties": {
 					"type": {
 						"x-stoplight": {
 							"id": "4ogsz639tcdb6"
 						},
-						"enum": ["Smtp", "Headless", "Api", "Skipped"],
+						"enum": [
+							"Smtp",
+							"Headless",
+							"Api",
+							"Skipped"
+						],
 						"description": "The method used for the email verification."
 					}
 				}
@@ -798,7 +815,9 @@
 				},
 				"type": "object",
 				"description": "Configuration for a webhook to receive email verification results. The method will be POST, and the body will contain the email verification response.",
-				"required": ["url"],
+				"required": [
+					"url"
+				],
 				"properties": {
 					"url": {
 						"type": "string",
@@ -817,18 +836,18 @@
 			}
 		},
 		"securitySchemes": {
-			"Authorization": {
-				"name": "Authorization",
+			"ReacherSecret": {
+				"name": "x-reacher-secret",
 				"type": "apiKey",
 				"in": "header",
-				"description": "A Reacher API key is required for all requests. Sign up on https://reacher.email to get your personal API key."
+				"description": "The secret configured with RCH__HEADER_SECRET. Required on all endpoints except /version."
 			}
 		},
 		"requestBodies": {}
 	},
 	"security": [
 		{
-			"Authorization": []
+			"ReacherSecret": []
 		}
 	]
 }

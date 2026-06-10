@@ -64,6 +64,10 @@ pub struct BackendConfig {
 	pub http_port: u16,
 	/// Shared secret between a trusted client and the backend.
 	pub header_secret: Option<String>,
+	/// Maximum number of emails accepted in a single `POST /v1/bulk`
+	/// submission.
+	#[serde(default = "default_max_bulk_job_size")]
+	pub max_bulk_job_size: usize,
 	/// Sentry DSN to report errors to
 	pub sentry_dsn: Option<String>,
 
@@ -90,6 +94,10 @@ pub struct BackendConfig {
 	throttle_manager: Arc<ThrottleManager>,
 }
 
+fn default_max_bulk_job_size() -> usize {
+	10_000
+}
+
 impl BackendConfig {
 	/// Create an empty BackendConfig. This is useful for testing purposes.
 	pub fn empty() -> Self {
@@ -105,6 +113,7 @@ impl BackendConfig {
 			http_host: "127.0.0.1".to_string(),
 			http_port: 8080,
 			header_secret: None,
+			max_bulk_job_size: default_max_bulk_job_size(),
 			sentry_dsn: None,
 			worker: WorkerConfig::default(),
 			storage: Some(StorageConfig::Noop),

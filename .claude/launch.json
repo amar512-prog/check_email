@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "coordinator",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["/Users/amar/Documents/check_email/coordinator/run_preview.sh"],
+      "port": 8000,
+      "autoPort": false
+    }
+  ]
+}

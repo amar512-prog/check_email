@@ -1,0 +1,69 @@
+services:
+  postgres:
+    image: postgres:14.18-alpine
+    container_name: reacher-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - reacher_postgres_data:/var/lib/postgresql/data
+    networks:
+      - reacher-local
+
+  rabbitmq:
+    image: rabbitmq:4.0.9-management-alpine
+    container_name: reacher-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - reacher_rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - reacher-local
+
+  reacher:
+    image: reacherhq/backend@sha256:cb73c2ee5bd684e014174aba64316d6cd567260f6c6c97fcda47de3fc95f7266
+    platform: linux/amd64
+    container_name: reacher-check-email
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RCH__BACKEND_NAME: local-worker
+      RCH__HEADER_SECRET: ${RCH__HEADER_SECRET}
+      RCH__HTTP_HOST: 0.0.0.0
+      RCH__WORKER__ENABLE: "true"
+      RCH__WORKER__RABBITMQ__URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672
+      RCH__WORKER__RABBITMQ__CONCURRENCY: "5"
+      RCH__STORAGE__POSTGRES__DB_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      RCH__THROTTLE__MAX_REQUESTS_PER_MINUTE: "50"
+      RCH__THROTTLE__MAX_REQUESTS_PER_DAY: "10000"
+      RUST_LOG: reacher=info
+    ports:
+      - 127.0.0.1:8080:8080
+    networks:
+      - reacher-local
+
+volumes:
+  reacher_postgres_data:
+  reacher_rabbitmq_data:
+
+networks:
+  reacher-local:
+    external: true

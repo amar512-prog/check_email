@@ -1,0 +1,68 @@
+services:
+  postgres-2:
+    image: postgres:14.18-alpine
+    container_name: reacher-postgres-2
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - reacher_postgres_data_2:/var/lib/postgresql/data
+    networks:
+      - reacher-local-2
+
+  rabbitmq-2:
+    image: rabbitmq:4.0.9-management-alpine
+    container_name: reacher-rabbitmq-2
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - reacher_rabbitmq_data_2:/var/lib/rabbitmq
+    networks:
+      - reacher-local-2
+
+  reacher-2:
+    image: reacherhq/backend@sha256:cb73c2ee5bd684e014174aba64316d6cd567260f6c6c97fcda47de3fc95f7266
+    platform: linux/amd64
+    container_name: reacher-check-email-2
+    restart: unless-stopped
+    depends_on:
+      postgres-2:
+        condition: service_healthy
+      rabbitmq-2:
+        condition: service_healthy
+    environment:
+      RCH__BACKEND_NAME: local-worker-2
+      RCH__HEADER_SECRET: ${RCH__HEADER_SECRET}
+      RCH__HTTP_HOST: 0.0.0.0
+      RCH__WORKER__ENABLE: "true"
+      RCH__WORKER__RABBITMQ__URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq-2:5672
+      RCH__WORKER__RABBITMQ__CONCURRENCY: "5"
+      RCH__STORAGE__POSTGRES__DB_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-2:5432/${POSTGRES_DB}
+      RCH__THROTTLE__MAX_REQUESTS_PER_MINUTE: "50"
+      RCH__THROTTLE__MAX_REQUESTS_PER_DAY: "10000"
+      RUST_LOG: reacher=info
+    ports:
+      - 127.0.0.1:8082:8080
+    networks:
+      - reacher-local-2
+
+volumes:
+  reacher_postgres_data_2:
+  reacher_rabbitmq_data_2:
+
+networks:
+  reacher-local-2:

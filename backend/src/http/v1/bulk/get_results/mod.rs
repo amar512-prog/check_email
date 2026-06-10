@@ -27,7 +27,7 @@ use warp::Filter;
 
 use super::with_worker_db;
 use crate::config::BackendConfig;
-use crate::http::ReacherResponseError;
+use crate::http::{check_header, ReacherResponseError};
 use csv_helper::{CsvResponse, CsvWrapper};
 
 mod csv_helper;
@@ -181,6 +181,7 @@ pub fn v1_get_bulk_job_results(
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
 	warp::path!("v1" / "bulk" / i32 / "results")
 		.and(warp::get())
+		.and(check_header(Arc::clone(&config)))
 		.and(with_worker_db(config))
 		.and(warp::query::<Request>())
 		.and_then(http_handler)

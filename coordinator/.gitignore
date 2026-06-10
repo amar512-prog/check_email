@@ -1,0 +1,8 @@
+.env
+.venv/
+backend/data/
+frontend/dist/
+frontend/node_modules/
+
+local-preview.env
+run_preview.sh

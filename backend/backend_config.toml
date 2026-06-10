@@ -42,6 +42,12 @@ from_email = "hello@localhost"
 # Env variable: RCH__HEADER_SECRET
 # header_secret = "my-secret"
 
+# Maximum number of emails accepted in a single POST /v1/bulk submission.
+# Defaults to 10000.
+#
+# Env variable: RCH__MAX_BULK_JOB_SIZE
+# max_bulk_job_size = 10000
+
 # Optional Sentry DSN. If set, all errors will be sent to Sentry.
 #
 # Env variable: RCH__SENTRY_DSN
