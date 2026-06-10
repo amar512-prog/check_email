@@ -91,6 +91,17 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(8, 123, 97, .22)
 .server-row span { color: var(--muted); font-size: 11px; }
 .server-rate { font-variant-numeric: tabular-nums; }
 
+.retry-field { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 2px 14px; color: var(--muted); font-size: 12px; font-weight: 650; }
+.retry-input { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); }
+.retry-input input { width: 58px; min-height: 34px; border: 1px solid #cbd4d0; border-radius: 4px; background: #fff; padding: 0 8px; font-size: 13px; text-align: right; }
+.retry-input input:focus { outline: none; border-color: var(--accent); }
+.retry-note { margin: 10px 0 0; color: var(--risky); font-size: 12px; }
+
+.jobs-section { border-top: 1px solid var(--border); margin-top: 34px; padding: 26px 0 10px; }
+.jobs-table .job-row { cursor: pointer; }
+.jobs-table .job-row:hover td { background: var(--surface); }
+.jobs-table td { font-variant-numeric: tabular-nums; }
+
 .primary-button, .secondary-button, .text-button { border-radius: 4px; cursor: pointer; font-weight: 650; }
 .primary-button { min-height: 42px; width: 100%; border: 1px solid var(--accent); background: var(--accent); color: white; display: flex; align-items: center; justify-content: center; gap: 9px; font-size: 14px; }
 .primary-button:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
@@ -106,6 +117,7 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(8, 123, 97, .22)
 .job-section { border-bottom: 1px solid var(--border); }
 .job-state { padding: 5px 9px; border-radius: 3px; background: #eef2f0; color: var(--muted); font-size: 11px; font-weight: 750; text-transform: uppercase; }
 .job-state.running { background: #e7f4ef; color: var(--accent); }
+.job-state.retrying { background: #fdf3e4; color: var(--risky); }
 .job-state.completed { background: #e7f4ef; color: var(--safe); }
 .job-state.failed { background: #faeaea; color: var(--invalid); }
 .stats-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 18px; margin: 26px 0 22px; }

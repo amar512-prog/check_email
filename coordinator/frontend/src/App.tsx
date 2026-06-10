@@ -152,6 +152,7 @@ function UploadWorkspace({
   const [mode, setMode] = useState<"csv" | "manual">("csv");
   const [file, setFile] = useState<File | null>(null);
   const [manualText, setManualText] = useState("");
+  const [retryDelay, setRetryDelay] = useState(5);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -178,8 +179,8 @@ function UploadWorkspace({
       setSubmitting(true);
       const created =
         mode === "csv" && file
-          ? await api.createJob(file)
-          : await api.createJobFromEmails(manual.valid);
+          ? await api.createJob(file, retryDelay)
+          : await api.createJobFromEmails(manual.valid, retryDelay);
       onCreated(created.job_id);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Could not create the job");
@@ -280,11 +281,66 @@ function UploadWorkspace({
             </div>
           ))}
         </div>
+        <label className="retry-field">
+          <span>Retry unknowns after</span>
+          <span className="retry-input">
+            <input
+              type="number"
+              min={1}
+              max={15}
+              value={retryDelay}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                if (Number.isFinite(value)) setRetryDelay(Math.max(1, Math.min(15, Math.round(value))));
+              }}
+            />
+            min
+          </span>
+        </label>
         <button className="primary-button" disabled={!ready || !online.length || submitting} onClick={submit}>
           {submitting ? <RefreshCw className="spin" size={18} /> : <Check size={18} />}
           Start verification
         </button>
       </aside>
+    </section>
+  );
+}
+
+function JobsList({ jobs, onSelect }: { jobs: Job[]; onSelect: (jobId: string) => void }) {
+  return (
+    <section className="jobs-section" aria-label="All verification jobs">
+      <div className="section-heading">
+        <div>
+          <h2>Recent jobs</h2>
+          <p>Jobs from every user. Click a row to open its results.</p>
+        </div>
+      </div>
+      <div className="table-scroll">
+        <table className="jobs-table">
+          <thead>
+            <tr>
+              <th>Job</th><th>Owner</th><th>Status</th><th>Progress</th>
+              <th>Safe</th><th>Risky</th><th>Invalid</th><th>Unknown</th><th>Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {jobs.map((job) => (
+              <tr key={job.id} className="job-row" onClick={() => onSelect(job.id)}>
+                <td className="email-cell">{job.filename}</td>
+                <td>{job.user_email}</td>
+                <td><span className={`job-state ${job.status}`}>{job.status}</span></td>
+                <td>{job.processed.toLocaleString()}/{job.total.toLocaleString()}</td>
+                <td>{job.safe.toLocaleString()}</td>
+                <td>{job.risky.toLocaleString()}</td>
+                <td>{job.invalid.toLocaleString()}</td>
+                <td>{job.unknown.toLocaleString()}</td>
+                <td>{new Date(job.created_at).toLocaleString()}</td>
+              </tr>
+            ))}
+            {!jobs.length && <tr><td colSpan={9} className="empty-row">No jobs yet. Upload a CSV or enter emails above.</td></tr>}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -320,6 +376,9 @@ function JobProgress({ job }: { job: Job }) {
         <span style={{ width: `${percent}%` }} />
       </div>
       <div className="progress-meta"><span>{percent}% complete</span><span>{job.processed.toLocaleString()} of {job.total.toLocaleString()}</span></div>
+      {job.status === "retrying" && (
+        <p className="retry-note">Re-checking {job.unknown.toLocaleString()} unknown result{job.unknown === 1 ? "" : "s"} on another server…</p>
+      )}
       {!!job.servers?.length && (
         <div className="allocation-table">
           {job.servers.map((server) => (
@@ -422,6 +481,7 @@ export function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [job, setJob] = useState<Job | null>(null);
+  const [jobs, setJobs] = useState<Job[]>([]);
   const [results, setResults] = useState<ReacherResult[]>([]);
   const [filter, setFilter] = useState("all");
   const [error, setError] = useState("");
@@ -431,10 +491,6 @@ export function App() {
       const [nextConfig, session] = await Promise.all([api.config(), api.me()]);
       setConfig(nextConfig);
       setUser(session.user);
-      if (session.user) {
-        const recent = await api.jobs();
-        if (recent.jobs[0]) setJob(await api.job(recent.jobs[0].id));
-      }
     } catch (bootstrapError) {
       setError(bootstrapError instanceof Error ? bootstrapError.message : "Could not load Mailcheck");
     } finally {
@@ -443,6 +499,22 @@ export function App() {
   }, []);
 
   useEffect(() => { void bootstrap(); }, [bootstrap]);
+
+  useEffect(() => {
+    if (!user || job) return;
+    let cancelled = false;
+    const refreshJobs = async () => {
+      try {
+        const listing = await api.jobs();
+        if (!cancelled) setJobs(listing.jobs);
+      } catch {
+        // Listing refresh is best-effort; job view errors surface elsewhere.
+      }
+    };
+    void refreshJobs();
+    const timer = window.setInterval(refreshJobs, 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [user, job]);
 
   useEffect(() => {
     if (!job || !user) return;
@@ -488,7 +560,10 @@ export function App() {
           )}
         </div>
         {!job ? (
-          <UploadWorkspace config={config} onCreated={async (jobId) => setJob(await api.job(jobId))} />
+          <>
+            <UploadWorkspace config={config} onCreated={async (jobId) => setJob(await api.job(jobId))} />
+            <JobsList jobs={jobs} onSelect={async (jobId) => setJob(await api.job(jobId))} />
+          </>
         ) : (
           <>
             <JobProgress job={job} />

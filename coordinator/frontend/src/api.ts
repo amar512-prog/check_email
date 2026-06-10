@@ -35,18 +35,19 @@ export const api = {
       body: JSON.stringify({ credential }),
     }),
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
-  createJob: (file: File) => {
+  createJob: (file: File, retryDelayMinutes: number) => {
     const body = new FormData();
     body.append("file", file);
+    body.append("retry_delay_minutes", String(retryDelayMinutes));
     return request<{ job_id: string; accepted: number; rejected: number }>("/api/jobs", {
       method: "POST",
       body,
     });
   },
-  createJobFromEmails: (emails: string[]) =>
+  createJobFromEmails: (emails: string[], retryDelayMinutes: number) =>
     request<{ job_id: string; accepted: number; rejected: number }>("/api/jobs/emails", {
       method: "POST",
-      body: JSON.stringify({ emails }),
+      body: JSON.stringify({ emails, retry_delay_minutes: retryDelayMinutes }),
     }),
   jobs: () => request<{ jobs: Job[] }>("/api/jobs"),
   job: (id: string) => request<Job>(`/api/jobs/${id}`),

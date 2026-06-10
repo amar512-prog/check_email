@@ -24,6 +24,7 @@ class Settings:
     max_upload_emails: int
     pacing_seconds: float
     job_timeout_seconds: float
+    unknown_retry_attempts: int
     servers: tuple[ReacherServer, ...]
 
     @classmethod
@@ -72,5 +73,6 @@ class Settings:
             max_upload_emails=int(os.environ.get("MAX_UPLOAD_EMAILS", "10000")),
             pacing_seconds=float(os.environ.get("REACHER_PACING_SECONDS", "60")),
             job_timeout_seconds=float(os.environ.get("REACHER_JOB_TIMEOUT_SECONDS", "900")),
+            unknown_retry_attempts=max(0, int(os.environ.get("UNKNOWN_RETRY_ATTEMPTS", "3"))),
             servers=servers,
         )

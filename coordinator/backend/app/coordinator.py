@@ -44,47 +44,50 @@ class Coordinator:
 
             return await asyncio.gather(*(inspect(server) for server in self.settings.servers))
 
-    def create_job(self, user: dict[str, str], filename: str, emails: list[str]) -> str:
+    def create_job(
+        self,
+        user: dict[str, str],
+        filename: str,
+        emails: list[str],
+        retry_delay_seconds: int,
+    ) -> str:
         job_id = str(uuid.uuid4())
         now = utc_now()
         self.database.execute(
             """
             INSERT INTO jobs
-                (id, user_sub, user_email, filename, status, total, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)
+                (id, user_sub, user_email, filename, status, total, retry_delay_seconds,
+                 created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)
             """,
-            (job_id, user["sub"], user["email"], filename, len(emails), now, now),
+            (job_id, user["sub"], user["email"], filename, len(emails), retry_delay_seconds, now, now),
         )
-        self._tasks[job_id] = asyncio.create_task(self._run_job(job_id, emails))
+        self._tasks[job_id] = asyncio.create_task(self._run_job(job_id, emails, retry_delay_seconds))
         return job_id
 
-    async def _run_job(self, job_id: str, emails: list[str]) -> None:
+    async def _run_job(self, job_id: str, emails: list[str], retry_delay_seconds: int) -> None:
         self.database.execute(
             "UPDATE jobs SET status='running', updated_at=? WHERE id=?",
             (utc_now(), job_id),
         )
-        allocations: dict[ReacherServer, list[list[str]]] = defaultdict(list)
         server_count = len(self.settings.servers)
-        offsets = [0] * server_count
-
-        for index, email in enumerate(emails):
-            server_index = index % server_count
-            server = self.settings.servers[server_index]
-            batch_index = offsets[server_index] // server.emails_per_minute
-            if len(allocations[server]) <= batch_index:
-                allocations[server].append([])
-            allocations[server][batch_index].append(email)
-            offsets[server_index] += 1
-
         try:
-            outcomes = await asyncio.gather(
-                *(
-                    self._run_server_batches(job_id, server, batches)
-                    for server, batches in allocations.items()
-                ),
-                return_exceptions=True,
+            errors = await self._dispatch_round(
+                job_id,
+                [(email, index % server_count) for index, email in enumerate(emails)],
             )
-            errors = [str(outcome) for outcome in outcomes if isinstance(outcome, Exception)]
+            for attempt in range(1, self.settings.unknown_retry_attempts + 1):
+                if errors:
+                    break
+                unknowns = self._unknown_assignments(job_id, attempt)
+                if not unknowns:
+                    break
+                self.database.execute(
+                    "UPDATE jobs SET status='retrying', updated_at=? WHERE id=?",
+                    (utc_now(), job_id),
+                )
+                await asyncio.sleep(retry_delay_seconds)
+                errors = await self._dispatch_round(job_id, unknowns)
             final_status = "failed" if errors else "completed"
             self.database.execute(
                 "UPDATE jobs SET status=?, error=?, updated_at=? WHERE id=?",
@@ -97,6 +100,46 @@ class Coordinator:
             )
         finally:
             self._tasks.pop(job_id, None)
+
+    def _unknown_assignments(self, job_id: str, attempt: int) -> list[tuple[str, int]]:
+        """Assign each unknown email to a server other than the one that
+        produced its current result (different IP), stepping further around
+        the ring on every retry round."""
+        server_index_by_name = {server.name: i for i, server in enumerate(self.settings.servers)}
+        server_count = len(self.settings.servers)
+        assignments: list[tuple[str, int]] = []
+        rows = self.database.fetchall(
+            "SELECT email, result_json FROM results WHERE job_id=? AND status='unknown' ORDER BY id",
+            (job_id,),
+        )
+        for position, row in enumerate(rows):
+            backend = json.loads(row["result_json"]).get("debug", {}).get("backend_name")
+            last_index = server_index_by_name.get(backend, position)
+            assignments.append((row["email"], (last_index + attempt) % server_count))
+        return assignments
+
+    async def _dispatch_round(self, job_id: str, assignments: list[tuple[str, int]]) -> list[str]:
+        allocations: dict[ReacherServer, list[list[str]]] = defaultdict(list)
+        server_count = len(self.settings.servers)
+        offsets = [0] * server_count
+
+        for email, server_index in assignments:
+            server_index %= server_count
+            server = self.settings.servers[server_index]
+            batch_index = offsets[server_index] // server.emails_per_minute
+            if len(allocations[server]) <= batch_index:
+                allocations[server].append([])
+            allocations[server][batch_index].append(email)
+            offsets[server_index] += 1
+
+        outcomes = await asyncio.gather(
+            *(
+                self._run_server_batches(job_id, server, batches)
+                for server, batches in allocations.items()
+            ),
+            return_exceptions=True,
+        )
+        return [str(outcome) for outcome in outcomes if isinstance(outcome, Exception)]
 
     async def _run_server_batches(
         self,
@@ -208,9 +251,20 @@ class Coordinator:
             offset += limit
 
     def _refresh_job_counts(self, job_id: str) -> None:
+        # Live ticks come from subjob progress, but retry batches re-process
+        # emails that already have results, so cap at the stored result count
+        # ceiling: every email has at most one results row.
         processed = self.database.fetchone(
-            "SELECT COALESCE(SUM(processed), 0) AS count FROM subjobs WHERE job_id=?",
-            (job_id,),
+            """
+            SELECT MIN(
+                (SELECT total FROM jobs WHERE id=?),
+                MAX(
+                    (SELECT COALESCE(SUM(processed), 0) FROM subjobs WHERE job_id=?),
+                    (SELECT COUNT(*) FROM results WHERE job_id=?)
+                )
+            ) AS count
+            """,
+            (job_id, job_id, job_id),
         )
         counts = self.database.fetchone(
             """

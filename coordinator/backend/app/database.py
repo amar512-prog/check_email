@@ -75,12 +75,17 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_results_job_status ON results(job_id, status);
                 """
             )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)")}
+            if "retry_delay_seconds" not in columns:
+                connection.execute(
+                    "ALTER TABLE jobs ADD COLUMN retry_delay_seconds INTEGER NOT NULL DEFAULT 300"
+                )
             now = utc_now()
             connection.execute(
                 """
                 UPDATE jobs
                 SET status='failed', error='Coordinator restarted before completion', updated_at=?
-                WHERE status IN ('queued', 'running')
+                WHERE status IN ('queued', 'running', 'retrying')
                 """,
                 (now,),
             )
@@ -124,7 +129,17 @@ class Database:
             )
             for result in results
         ]
-        self.executemany(
-            "INSERT INTO results (job_id, email, status, result_json) VALUES (?, ?, ?, ?)",
-            rows,
-        )
+        if not rows:
+            return
+        with self._lock, self._connect() as connection:
+            # Retried emails replace their previous result so each email keeps
+            # exactly one row per job.
+            connection.executemany(
+                "DELETE FROM results WHERE job_id=? AND email=?",
+                [(job_id, row[1]) for row in rows],
+            )
+            connection.executemany(
+                "INSERT INTO results (job_id, email, status, result_json) VALUES (?, ?, ?, ?)",
+                rows,
+            )
+            connection.commit()

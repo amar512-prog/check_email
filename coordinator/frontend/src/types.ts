@@ -33,7 +33,8 @@ export interface ServerProgress {
 export interface Job {
   id: string;
   filename: string;
-  status: "queued" | "running" | "completed" | "failed";
+  user_email: string;
+  status: "queued" | "running" | "retrying" | "completed" | "failed";
   total: number;
   processed: number;
   safe: number;

@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -41,6 +41,11 @@ class GoogleLogin(BaseModel):
 
 class EmailList(BaseModel):
     emails: list[str]
+    retry_delay_minutes: int = 5
+
+
+def retry_delay_to_seconds(minutes: int) -> int:
+    return max(1, min(15, minutes)) * 60
 
 
 @app.get("/api/config")
@@ -135,13 +140,16 @@ def spreadsheet_safe(value: str) -> str:
 @app.post("/api/jobs")
 async def create_job(
     file: UploadFile = File(...),
+    retry_delay_minutes: int = Form(5),
     user: dict[str, str] = Depends(current_user),
 ) -> dict[str, Any]:
     filename = file.filename or "emails.csv"
     if not filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Upload a CSV file")
     emails, rejected = parse_email_csv(await file.read())
-    job_id = coordinator.create_job(user, filename, emails)
+    job_id = coordinator.create_job(
+        user, filename, emails, retry_delay_to_seconds(retry_delay_minutes)
+    )
     return {"job_id": job_id, "accepted": len(emails), "rejected": rejected}
 
 
@@ -154,12 +162,15 @@ async def create_job_from_emails(
         raise HTTPException(status_code=413, detail="Too many email addresses in one request")
     emails, rejected = normalize_emails(payload.emails)
     label = emails[0] if len(emails) == 1 else f"Manual entry ({len(emails)} emails)"
-    job_id = coordinator.create_job(user, label, emails)
+    job_id = coordinator.create_job(
+        user, label, emails, retry_delay_to_seconds(payload.retry_delay_minutes)
+    )
     return {"job_id": job_id, "accepted": len(emails), "rejected": rejected}
 
 
-def get_owned_job(job_id: str, user: dict[str, str]) -> dict[str, Any]:
-    job = database.fetchone("SELECT * FROM jobs WHERE id=? AND user_sub=?", (job_id, user["sub"]))
+def get_job_or_404(job_id: str) -> dict[str, Any]:
+    # Jobs are shared across all signed-in users.
+    job = database.fetchone("SELECT * FROM jobs WHERE id=?", (job_id,))
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     job["servers"] = database.fetchall(
@@ -179,15 +190,14 @@ def get_owned_job(job_id: str, user: dict[str, str]) -> dict[str, Any]:
 async def list_jobs(user: dict[str, str] = Depends(current_user)) -> dict[str, Any]:
     return {
         "jobs": database.fetchall(
-            "SELECT * FROM jobs WHERE user_sub=? ORDER BY created_at DESC LIMIT 20",
-            (user["sub"],),
+            "SELECT * FROM jobs ORDER BY created_at DESC LIMIT 50",
         )
     }
 
 
 @app.get("/api/jobs/{job_id}")
 async def job_status(job_id: str, user: dict[str, str] = Depends(current_user)) -> dict[str, Any]:
-    return get_owned_job(job_id, user)
+    return get_job_or_404(job_id)
 
 
 @app.get("/api/jobs/{job_id}/results")
@@ -198,7 +208,7 @@ async def job_results(
     offset: int = 0,
     user: dict[str, str] = Depends(current_user),
 ) -> dict[str, Any]:
-    get_owned_job(job_id, user)
+    get_job_or_404(job_id)
     limit = min(max(limit, 1), 500)
     offset = max(offset, 0)
     where = "job_id=?"
@@ -219,7 +229,7 @@ async def job_results(
 
 @app.get("/api/jobs/{job_id}/download")
 async def download_results(job_id: str, user: dict[str, str] = Depends(current_user)) -> StreamingResponse:
-    get_owned_job(job_id, user)
+    get_job_or_404(job_id)
     rows = database.fetchall(
         "SELECT email, status, result_json FROM results WHERE job_id=? ORDER BY id",
         (job_id,),
