@@ -35,7 +35,7 @@ services:
       - reacher-local-2
 
   reacher-2:
-    image: reacherhq/backend@sha256:cb73c2ee5bd684e014174aba64316d6cd567260f6c6c97fcda47de3fc95f7266
+    image: reacher-backend:patched
     platform: linux/amd64
     container_name: reacher-check-email-2
     restart: unless-stopped

@@ -13,3 +13,6 @@ hotmail.jpeg
 /test_suite/src/sensitive_fixtures/*.json
 run.sh
 .env
+
+# Local multi-server simulation only, not a deployment file
+docker-compose.worker2.yml
