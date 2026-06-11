@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import {
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleAlert,
   Download,
   FileSpreadsheet,
@@ -22,6 +24,35 @@ const filters: Array<{ value: "all" | Reachability; label: string }> = [
   { value: "invalid", label: "Invalid" },
   { value: "unknown", label: "Unknown" },
 ];
+
+const RESULTS_PAGE_SIZE = 50;
+const JOBS_PAGE_SIZE = 50;
+
+function Pager({ offset, pageSize, total, onChange }: {
+  offset: number;
+  pageSize: number;
+  total: number;
+  onChange: (offset: number) => void;
+}) {
+  if (total === 0) return null;
+  const from = offset + 1;
+  const to = Math.min(offset + pageSize, total);
+  const atStart = offset <= 0;
+  const atEnd = to >= total;
+  return (
+    <div className="pager">
+      <span className="pager-count">Showing {from.toLocaleString()}–{to.toLocaleString()} of {total.toLocaleString()}</span>
+      <div className="pager-buttons">
+        <button className="secondary-button" disabled={atStart} onClick={() => onChange(Math.max(0, offset - pageSize))}>
+          <ChevronLeft size={16} /> Prev
+        </button>
+        <button className="secondary-button" disabled={atEnd} onClick={() => onChange(offset + pageSize)}>
+          Next <ChevronRight size={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function GoogleLogin({ config, onLogin }: { config: PublicConfig; onLogin: (user: User) => void }) {
   const target = useRef<HTMLDivElement>(null);
@@ -348,7 +379,13 @@ function UploadWorkspace({
   );
 }
 
-function JobsList({ jobs, onSelect }: { jobs: Job[]; onSelect: (jobId: string) => void }) {
+function JobsList({ jobs, total, offset, onSelect, onPage }: {
+  jobs: Job[];
+  total: number;
+  offset: number;
+  onSelect: (jobId: string) => void;
+  onPage: (offset: number) => void;
+}) {
   return (
     <section className="jobs-section" aria-label="All verification jobs">
       <div className="section-heading">
@@ -383,6 +420,7 @@ function JobsList({ jobs, onSelect }: { jobs: Job[]; onSelect: (jobId: string) =
           </tbody>
         </table>
       </div>
+      <Pager offset={offset} pageSize={JOBS_PAGE_SIZE} total={total} onChange={onPage} />
     </section>
   );
 }
@@ -442,11 +480,14 @@ function ResultStatus({ status }: { status: Reachability }) {
   return <span className={`result-status ${status}`}><span />{status}</span>;
 }
 
-function ResultsTable({ job, results, filter, onFilter }: {
+function ResultsTable({ job, results, total, offset, filter, onFilter, onPage }: {
   job: Job;
   results: ReacherResult[];
+  total: number;
+  offset: number;
   filter: string;
   onFilter: (filter: string) => void;
+  onPage: (offset: number) => void;
 }) {
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
@@ -478,7 +519,7 @@ function ResultsTable({ job, results, filter, onFilter }: {
   return (
     <section className="results-section">
       <div className="section-heading results-heading">
-        <div><h2>Results</h2><p>Showing the first 200 matching records</p></div>
+        <div><h2>Results</h2><p>Verified records, newest first</p></div>
         <button className="secondary-button download-button" onClick={downloadCsv} disabled={downloading || !results.length}>
           {downloading ? <RefreshCw className="spin" size={17} /> : <Download size={17} />}
           {downloading ? "Preparing CSV" : "Download CSV"}
@@ -514,6 +555,7 @@ function ResultsTable({ job, results, filter, onFilter }: {
           </tbody>
         </table>
       </div>
+      <Pager offset={offset} pageSize={RESULTS_PAGE_SIZE} total={total} onChange={onPage} />
     </section>
   );
 }
@@ -524,7 +566,11 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [job, setJob] = useState<Job | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [jobsTotal, setJobsTotal] = useState(0);
+  const [jobsOffset, setJobsOffset] = useState(0);
   const [results, setResults] = useState<ReacherResult[]>([]);
+  const [resultsTotal, setResultsTotal] = useState(0);
+  const [resultsOffset, setResultsOffset] = useState(0);
   const [filter, setFilter] = useState("all");
   const [error, setError] = useState("");
 
@@ -547,8 +593,10 @@ export function App() {
     let cancelled = false;
     const refreshJobs = async () => {
       try {
-        const listing = await api.jobs();
-        if (!cancelled) setJobs(listing.jobs);
+        const listing = await api.jobs(JOBS_PAGE_SIZE, jobsOffset);
+        if (cancelled) return;
+        setJobs(listing.jobs);
+        setJobsTotal(listing.total);
       } catch {
         // Listing refresh is best-effort; job view errors surface elsewhere.
       }
@@ -556,17 +604,21 @@ export function App() {
     void refreshJobs();
     const timer = window.setInterval(refreshJobs, 5000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [user, job]);
+  }, [user, job, jobsOffset]);
 
   useEffect(() => {
     if (!job || !user) return;
     let cancelled = false;
     const refresh = async () => {
       try {
-        const [nextJob, nextResults] = await Promise.all([api.job(job.id), api.results(job.id, filter)]);
+        const [nextJob, nextResults] = await Promise.all([
+          api.job(job.id),
+          api.results(job.id, filter, RESULTS_PAGE_SIZE, resultsOffset),
+        ]);
         if (cancelled) return;
         setJob(nextJob);
         setResults(nextResults.results);
+        setResultsTotal(nextResults.total);
       } catch (refreshError) {
         if (!cancelled) setError(refreshError instanceof Error ? refreshError.message : "Could not refresh the job");
       }
@@ -575,7 +627,15 @@ export function App() {
     if (job.status === "completed" || job.status === "failed") return () => { cancelled = true; };
     const timer = window.setInterval(refresh, 1000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [job?.id, job?.status, filter, user]);
+  }, [job?.id, job?.status, filter, resultsOffset, user]);
+
+  const openJob = async (jobId: string) => {
+    setFilter("all");
+    setResults([]);
+    setResultsTotal(0);
+    setResultsOffset(0);
+    setJob(await api.job(jobId));
+  };
 
   const logout = async () => {
     await api.logout();
@@ -596,20 +656,28 @@ export function App() {
         <div className="page-heading">
           <div><h1>Verify email lists</h1><p>Upload a CSV or enter addresses directly; verification is distributed across connected workers.</p></div>
           {job && (
-            <button className="text-button" onClick={() => { setJob(null); setResults([]); setFilter("all"); }}>
+            <button className="text-button" onClick={() => { setJob(null); setResults([]); setResultsTotal(0); setResultsOffset(0); setFilter("all"); }}>
               New job
             </button>
           )}
         </div>
         {!job ? (
           <>
-            <UploadWorkspace config={config} onCreated={async (jobId) => setJob(await api.job(jobId))} />
-            <JobsList jobs={jobs} onSelect={async (jobId) => setJob(await api.job(jobId))} />
+            <UploadWorkspace config={config} onCreated={openJob} />
+            <JobsList jobs={jobs} total={jobsTotal} offset={jobsOffset} onSelect={openJob} onPage={setJobsOffset} />
           </>
         ) : (
           <>
             <JobProgress job={job} />
-            <ResultsTable job={job} results={results} filter={filter} onFilter={setFilter} />
+            <ResultsTable
+              job={job}
+              results={results}
+              total={resultsTotal}
+              offset={resultsOffset}
+              filter={filter}
+              onFilter={(next) => { setFilter(next); setResultsOffset(0); }}
+              onPage={setResultsOffset}
+            />
           </>
         )}
         {error && job && <button className="toast" onClick={() => setError("")}><CircleAlert size={16} />{error}<X size={15} /></button>}

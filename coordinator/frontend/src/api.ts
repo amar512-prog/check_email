@@ -54,11 +54,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ emails, retry_delay_minutes: retryDelayMinutes }),
     }),
-  jobs: () => request<{ jobs: Job[] }>("/api/jobs"),
+  jobs: (limit = 50, offset = 0) =>
+    request<{ total: number; jobs: Job[] }>(`/api/jobs?limit=${limit}&offset=${offset}`),
   job: (id: string) => request<Job>(`/api/jobs/${id}`),
-  results: (id: string, status: string) =>
+  results: (id: string, status: string, limit = 50, offset = 0) =>
     request<{ total: number; results: ReacherResult[] }>(
-      `/api/jobs/${id}/results?status=${encodeURIComponent(status)}&limit=200`,
+      `/api/jobs/${id}/results?status=${encodeURIComponent(status)}&limit=${limit}&offset=${offset}`,
     ),
   downloadResults: (id: string) => download(`/api/jobs/${id}/download`),
 };

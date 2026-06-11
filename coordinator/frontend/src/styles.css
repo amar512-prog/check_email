@@ -103,6 +103,12 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(8, 123, 97, .22)
 .retry-input input:focus { outline: none; border-color: var(--accent); }
 .retry-note { margin: 10px 0 0; color: var(--risky); font-size: 12px; }
 
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.pager-count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.pager-buttons { display: flex; gap: 8px; }
+.pager-buttons .secondary-button { min-height: 34px; padding: 0 12px; gap: 4px; }
+.pager-buttons .secondary-button:disabled { opacity: .45; cursor: not-allowed; }
+
 .jobs-section { border-top: 1px solid var(--border); margin-top: 34px; padding: 26px 0 10px; }
 .jobs-table .job-row { cursor: pointer; }
 .jobs-table .job-row:hover td { background: var(--surface); }

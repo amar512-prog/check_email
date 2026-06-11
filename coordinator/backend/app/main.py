@@ -339,14 +339,24 @@ def get_job_or_404(job_id: str) -> dict[str, Any]:
 @app.get(
     "/api/jobs",
     tags=["Jobs"],
-    summary="List recent jobs",
-    description="The 50 most recent jobs across all users, newest first.",
+    summary="List jobs (paginated)",
+    description="Jobs across all users, newest first. Use `limit` (1–100) and `offset` "
+    "to page; `total` is the full count.",
 )
-async def list_jobs(user: dict[str, str] = Depends(current_user)) -> dict[str, Any]:
+async def list_jobs(
+    limit: int = Query(50, description="Page size, clamped to 1–100."),
+    offset: int = Query(0, description="Number of jobs to skip."),
+    user: dict[str, str] = Depends(current_user),
+) -> dict[str, Any]:
+    limit = min(max(limit, 1), 100)
+    offset = max(offset, 0)
+    total = database.fetchone("SELECT COUNT(*) AS count FROM jobs")
     return {
+        "total": int((total or {}).get("count") or 0),
         "jobs": database.fetchall(
-            "SELECT * FROM jobs ORDER BY created_at DESC LIMIT 50",
-        )
+            "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ),
     }
 
 
