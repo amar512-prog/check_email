@@ -7,10 +7,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
 from .auth import current_user, validate_basic_credentials, verify_google_credential
@@ -24,7 +24,56 @@ settings = Settings.from_env()
 database = Database(settings.database_path)
 coordinator = Coordinator(settings, database)
 
-app = FastAPI(title="Mailcheck Coordinator", version="0.1.0")
+API_DESCRIPTION = """
+**Mailcheck** distributes email-list verification across one or more Reacher
+workers and exposes the results through this API.
+
+### Workflow
+
+1. **Create a job** — upload a CSV (`POST /api/jobs`) or send a JSON list
+   (`POST /api/jobs/emails`). You get back a `job_id`.
+2. **Poll the job** — `GET /api/jobs/{job_id}` until `status` is `completed`
+   or `failed` (`running` / `retrying` while in progress).
+3. **Read results** — page through `GET /api/jobs/{job_id}/results`, or
+   download a flat CSV from `GET /api/jobs/{job_id}/download`.
+
+### Result categories
+
+Each address resolves to one of **`safe`**, **`risky`**, **`invalid`**, or
+**`unknown`**. `unknown` results (often greylisting or provider blocks) are
+automatically re-verified up to a few times on a *different* server; the wait
+between rounds is the job's `retry_delay_minutes` (1–15, default 1).
+
+### Authentication
+
+- **Browser** — sign in with Google or username/password; the session cookie
+  authorizes every call automatically.
+- **Machine / API** — send an `X-API-Key: <key>` header. In this page click
+  **Authorize**, paste the key once, then use **Try it out**.
+
+### Quick start
+
+```bash
+curl -X POST https://email-verifier.revengineer.ai/api/jobs/emails \\
+  -H "X-API-Key: <your-key>" -H "Content-Type: application/json" \\
+  -d '{"emails":["amar@basisvps.com","jane@example.com"],"retry_delay_minutes":1}'
+```
+"""
+
+OPENAPI_TAGS = [
+    {"name": "Status", "description": "Public service configuration and worker health."},
+    {"name": "Authentication", "description": "Sign in / out. Some routes are enabled only in the matching auth mode."},
+    {"name": "Jobs", "description": "Create and track verification jobs."},
+    {"name": "Results", "description": "Read or download verified results."},
+]
+
+app = FastAPI(
+    title="Mailcheck Coordinator",
+    version="0.1.0",
+    description=API_DESCRIPTION,
+    openapi_tags=OPENAPI_TAGS,
+    swagger_ui_parameters={"defaultModelsExpandDepth": 0},
+)
 app.state.settings = settings
 app.add_middleware(
     SessionMiddleware,
@@ -37,24 +86,45 @@ app.add_middleware(
 
 
 class GoogleLogin(BaseModel):
-    credential: str
+    credential: str = Field(
+        ...,
+        description="The Google ID-token (a JWT, starts with `eyJ…`) returned by the "
+        "Sign-in-with-Google flow in the browser.",
+    )
 
 
 class EmailList(BaseModel):
-    emails: list[str]
-    retry_delay_minutes: int = 1
+    emails: list[str] = Field(
+        ...,
+        description="Email addresses to verify. Duplicates and invalid syntax are dropped.",
+        examples=[["amar@basisvps.com", "jane@example.com"]],
+    )
+    retry_delay_minutes: int = Field(
+        1,
+        ge=1,
+        le=15,
+        description="Minutes to wait before re-verifying any 'unknown' results on a "
+        "different server (1–15, default 1).",
+    )
 
 
 class PasswordLogin(BaseModel):
-    username: str
-    password: str
+    username: str = Field(..., description="The configured AUTH_USERNAME.")
+    password: str = Field(..., description="The configured AUTH_PASSWORD.")
+
+    model_config = {"json_schema_extra": {"example": {"username": "admin", "password": "your-password"}}}
 
 
 def retry_delay_to_seconds(minutes: int) -> int:
     return max(1, min(15, minutes)) * 60
 
 
-@app.get("/api/config")
+@app.get(
+    "/api/config",
+    tags=["Status"],
+    summary="Public configuration and worker health",
+    response_description="Auth mode, enabled login methods, upload limit, and per-worker status.",
+)
 async def public_config() -> dict[str, Any]:
     return {
         "auth_mode": settings.auth_mode,
@@ -65,12 +135,24 @@ async def public_config() -> dict[str, Any]:
     }
 
 
-@app.get("/api/auth/me")
+@app.get(
+    "/api/auth/me",
+    tags=["Authentication"],
+    summary="Current session user",
+    response_description="`{user: null}` when not signed in, otherwise the session user.",
+)
 async def auth_me(request: Request) -> dict[str, Any]:
     return {"user": request.session.get("user")}
 
 
-@app.post("/api/auth/google")
+@app.post(
+    "/api/auth/google",
+    tags=["Authentication"],
+    summary="Sign in with a Google ID token",
+    description="Verifies the Google credential server-side and starts a session. "
+    "Returns 404 unless the coordinator runs in `google` auth mode.",
+    responses={401: {"description": "Invalid Google credential"}, 404: {"description": "Google login not enabled"}},
+)
 async def auth_google(payload: GoogleLogin, request: Request) -> dict[str, Any]:
     if settings.auth_mode != "google":
         raise HTTPException(status_code=404, detail="Google login is not enabled")
@@ -80,7 +162,14 @@ async def auth_google(payload: GoogleLogin, request: Request) -> dict[str, Any]:
     return {"user": user}
 
 
-@app.post("/api/auth/password")
+@app.post(
+    "/api/auth/password",
+    tags=["Authentication"],
+    summary="Sign in with username and password",
+    description="Validates the static `AUTH_USERNAME`/`AUTH_PASSWORD` and starts a session. "
+    "Returns 404 unless both env vars are set.",
+    responses={401: {"description": "Invalid username or password"}, 404: {"description": "Password login not enabled"}},
+)
 async def auth_password(payload: PasswordLogin, request: Request) -> dict[str, Any]:
     if not settings.password_enabled:
         raise HTTPException(status_code=404, detail="Password login is not enabled")
@@ -97,7 +186,13 @@ async def auth_password(payload: PasswordLogin, request: Request) -> dict[str, A
     return {"user": user}
 
 
-@app.post("/api/auth/development")
+@app.post(
+    "/api/auth/development",
+    tags=["Authentication"],
+    summary="Local development login",
+    description="One-click login for local testing. Returns 404 unless auth mode is `development`.",
+    responses={404: {"description": "Development login disabled"}},
+)
 async def auth_development(request: Request) -> dict[str, Any]:
     if settings.auth_mode != "development":
         raise HTTPException(status_code=404, detail="Development login is disabled")
@@ -112,7 +207,11 @@ async def auth_development(request: Request) -> dict[str, Any]:
     return {"user": user}
 
 
-@app.post("/api/auth/logout")
+@app.post(
+    "/api/auth/logout",
+    tags=["Authentication"],
+    summary="Clear the session",
+)
 async def auth_logout(request: Request) -> dict[str, bool]:
     request.session.clear()
     return {"ok": True}
@@ -161,10 +260,25 @@ def spreadsheet_safe(value: str) -> str:
     return f"'{value}" if value.startswith(("=", "+", "-", "@")) else value
 
 
-@app.post("/api/jobs")
+@app.post(
+    "/api/jobs",
+    tags=["Jobs"],
+    summary="Create a job from a CSV upload",
+    description="Upload a CSV whose first column holds email addresses (a header row "
+    "named email/email_address/to_email is skipped). Max 10 MB and "
+    "`max_upload_emails` unique addresses.",
+    response_description="The created job id with accepted and rejected counts.",
+    responses={
+        400: {"description": "Not a CSV / no valid emails / over the limit"},
+        401: {"description": "Missing or invalid authentication"},
+        413: {"description": "File larger than 10 MB"},
+    },
+)
 async def create_job(
-    file: UploadFile = File(...),
-    retry_delay_minutes: int = Form(1),
+    file: UploadFile = File(..., description="CSV file; email addresses in the first column."),
+    retry_delay_minutes: int = Form(
+        1, description="Minutes between retry rounds for 'unknown' results (1–15)."
+    ),
     user: dict[str, str] = Depends(current_user),
 ) -> dict[str, Any]:
     filename = file.filename or "emails.csv"
@@ -177,7 +291,19 @@ async def create_job(
     return {"job_id": job_id, "accepted": len(emails), "rejected": rejected}
 
 
-@app.post("/api/jobs/emails")
+@app.post(
+    "/api/jobs/emails",
+    tags=["Jobs"],
+    summary="Create a job from a list of emails",
+    description="Submit one or many addresses as JSON. Duplicates and invalid syntax "
+    "are dropped before the job is created.",
+    response_description="The created job id with accepted and rejected counts.",
+    responses={
+        400: {"description": "No valid emails / over the limit"},
+        401: {"description": "Missing or invalid authentication"},
+        413: {"description": "Too many email addresses in one request"},
+    },
+)
 async def create_job_from_emails(
     payload: EmailList,
     user: dict[str, str] = Depends(current_user),
@@ -210,7 +336,12 @@ def get_job_or_404(job_id: str) -> dict[str, Any]:
     return job
 
 
-@app.get("/api/jobs")
+@app.get(
+    "/api/jobs",
+    tags=["Jobs"],
+    summary="List recent jobs",
+    description="The 50 most recent jobs across all users, newest first.",
+)
 async def list_jobs(user: dict[str, str] = Depends(current_user)) -> dict[str, Any]:
     return {
         "jobs": database.fetchall(
@@ -219,17 +350,32 @@ async def list_jobs(user: dict[str, str] = Depends(current_user)) -> dict[str, A
     }
 
 
-@app.get("/api/jobs/{job_id}")
+@app.get(
+    "/api/jobs/{job_id}",
+    tags=["Jobs"],
+    summary="Job status and progress",
+    description="Counts and per-server progress for one job. Poll until `status` is "
+    "`completed` or `failed` (`running`/`retrying` while in progress).",
+    responses={404: {"description": "Job not found"}},
+)
 async def job_status(job_id: str, user: dict[str, str] = Depends(current_user)) -> dict[str, Any]:
     return get_job_or_404(job_id)
 
 
-@app.get("/api/jobs/{job_id}/results")
+@app.get(
+    "/api/jobs/{job_id}/results",
+    tags=["Results"],
+    summary="Read verified results (paginated)",
+    description="Returns the raw Reacher result objects. Each has an `is_reachable` of "
+    "`safe`/`risky`/`invalid`/`unknown`, plus `mx`, `smtp`, and `debug` details.",
+    response_description="`total` matching count and a page of `results`.",
+    responses={404: {"description": "Job not found"}},
+)
 async def job_results(
     job_id: str,
-    status: str = "all",
-    limit: int = 200,
-    offset: int = 0,
+    status: str = Query("all", description="Filter: `all`, `safe`, `risky`, `invalid`, or `unknown`."),
+    limit: int = Query(200, description="Page size, clamped to 1–500."),
+    offset: int = Query(0, description="Number of rows to skip."),
     user: dict[str, str] = Depends(current_user),
 ) -> dict[str, Any]:
     get_job_or_404(job_id)
@@ -251,7 +397,15 @@ async def job_results(
     }
 
 
-@app.get("/api/jobs/{job_id}/download")
+@app.get(
+    "/api/jobs/{job_id}/download",
+    tags=["Results"],
+    summary="Download results as CSV",
+    description="A flat CSV with columns: email, status, accepts_mail, smtp_deliverable, "
+    "catch_all, duration_seconds. Values are escaped against spreadsheet formula injection.",
+    response_description="`text/csv` attachment.",
+    responses={404: {"description": "Job not found"}},
+)
 async def download_results(job_id: str, user: dict[str, str] = Depends(current_user)) -> StreamingResponse:
     get_job_or_404(job_id)
     rows = database.fetchall(
