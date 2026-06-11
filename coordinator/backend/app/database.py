@@ -73,6 +73,7 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_jobs_user ON jobs(user_sub, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_subjobs_job ON subjobs(job_id, server_name, batch_number);
                 CREATE INDEX IF NOT EXISTS idx_results_job_status ON results(job_id, status);
+                CREATE INDEX IF NOT EXISTS idx_results_job_email ON results(job_id, email);
                 """
             )
             columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)")}

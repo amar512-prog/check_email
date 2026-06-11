@@ -156,6 +156,11 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(8, 123, 97, .22)
 table { width: 100%; border-collapse: collapse; min-width: 760px; font-size: 12px; }
 th { height: 42px; text-align: left; color: var(--muted); font-size: 10px; text-transform: uppercase; font-weight: 750; border-bottom: 1px solid var(--border); }
 td { height: 48px; border-bottom: 1px solid #edf0ef; color: #45504c; }
+.sort-header { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; padding: 0; cursor: pointer; font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; font-weight: inherit; }
+.sort-header svg { color: #aab3af; }
+.sort-header:hover { color: var(--ink); }
+.sort-header.active { color: var(--accent); }
+.sort-header.active svg { color: var(--accent); }
 .email-cell { color: var(--ink); font-weight: 550; }
 .result-status { display: inline-flex; align-items: center; gap: 7px; text-transform: capitalize; font-weight: 650; }
 .result-status > span { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }

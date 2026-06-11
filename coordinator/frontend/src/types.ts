@@ -1,5 +1,7 @@
 export type Reachability = "safe" | "risky" | "invalid" | "unknown";
 
+export type ResultSort = "default" | "email_asc" | "email_desc";
+
 export interface User {
   sub: string;
   email: string;

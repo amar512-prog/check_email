@@ -57,9 +57,9 @@ export const api = {
   jobs: (limit = 50, offset = 0) =>
     request<{ total: number; jobs: Job[] }>(`/api/jobs?limit=${limit}&offset=${offset}`),
   job: (id: string) => request<Job>(`/api/jobs/${id}`),
-  results: (id: string, status: string, limit = 50, offset = 0) =>
+  results: (id: string, status: string, limit = 50, offset = 0, sort = "default") =>
     request<{ total: number; results: ReacherResult[] }>(
-      `/api/jobs/${id}/results?status=${encodeURIComponent(status)}&limit=${limit}&offset=${offset}`,
+      `/api/jobs/${id}/results?status=${encodeURIComponent(status)}&limit=${limit}&offset=${offset}&sort=${sort}`,
     ),
   downloadResults: (id: string) => download(`/api/jobs/${id}/download`),
 };

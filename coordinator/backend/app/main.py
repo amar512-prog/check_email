@@ -61,8 +61,6 @@ curl -X POST https://email-verifier.revengineer.ai/api/jobs/emails \\
 """
 
 OPENAPI_TAGS = [
-    {"name": "Status", "description": "Public service configuration and worker health."},
-    {"name": "Authentication", "description": "Sign in / out. Some routes are enabled only in the matching auth mode."},
     {"name": "Jobs", "description": "Create and track verification jobs."},
     {"name": "Results", "description": "Read or download verified results."},
 ]
@@ -119,12 +117,7 @@ def retry_delay_to_seconds(minutes: int) -> int:
     return max(1, min(15, minutes)) * 60
 
 
-@app.get(
-    "/api/config",
-    tags=["Status"],
-    summary="Public configuration and worker health",
-    response_description="Auth mode, enabled login methods, upload limit, and per-worker status.",
-)
+@app.get("/api/config", include_in_schema=False)
 async def public_config() -> dict[str, Any]:
     return {
         "auth_mode": settings.auth_mode,
@@ -135,24 +128,12 @@ async def public_config() -> dict[str, Any]:
     }
 
 
-@app.get(
-    "/api/auth/me",
-    tags=["Authentication"],
-    summary="Current session user",
-    response_description="`{user: null}` when not signed in, otherwise the session user.",
-)
+@app.get("/api/auth/me", include_in_schema=False)
 async def auth_me(request: Request) -> dict[str, Any]:
     return {"user": request.session.get("user")}
 
 
-@app.post(
-    "/api/auth/google",
-    tags=["Authentication"],
-    summary="Sign in with a Google ID token",
-    description="Verifies the Google credential server-side and starts a session. "
-    "Returns 404 unless the coordinator runs in `google` auth mode.",
-    responses={401: {"description": "Invalid Google credential"}, 404: {"description": "Google login not enabled"}},
-)
+@app.post("/api/auth/google", include_in_schema=False)
 async def auth_google(payload: GoogleLogin, request: Request) -> dict[str, Any]:
     if settings.auth_mode != "google":
         raise HTTPException(status_code=404, detail="Google login is not enabled")
@@ -162,14 +143,7 @@ async def auth_google(payload: GoogleLogin, request: Request) -> dict[str, Any]:
     return {"user": user}
 
 
-@app.post(
-    "/api/auth/password",
-    tags=["Authentication"],
-    summary="Sign in with username and password",
-    description="Validates the static `AUTH_USERNAME`/`AUTH_PASSWORD` and starts a session. "
-    "Returns 404 unless both env vars are set.",
-    responses={401: {"description": "Invalid username or password"}, 404: {"description": "Password login not enabled"}},
-)
+@app.post("/api/auth/password", include_in_schema=False)
 async def auth_password(payload: PasswordLogin, request: Request) -> dict[str, Any]:
     if not settings.password_enabled:
         raise HTTPException(status_code=404, detail="Password login is not enabled")
@@ -186,13 +160,7 @@ async def auth_password(payload: PasswordLogin, request: Request) -> dict[str, A
     return {"user": user}
 
 
-@app.post(
-    "/api/auth/development",
-    tags=["Authentication"],
-    summary="Local development login",
-    description="One-click login for local testing. Returns 404 unless auth mode is `development`.",
-    responses={404: {"description": "Development login disabled"}},
-)
+@app.post("/api/auth/development", include_in_schema=False)
 async def auth_development(request: Request) -> dict[str, Any]:
     if settings.auth_mode != "development":
         raise HTTPException(status_code=404, detail="Development login is disabled")
@@ -207,11 +175,7 @@ async def auth_development(request: Request) -> dict[str, Any]:
     return {"user": user}
 
 
-@app.post(
-    "/api/auth/logout",
-    tags=["Authentication"],
-    summary="Clear the session",
-)
+@app.post("/api/auth/logout", include_in_schema=False)
 async def auth_logout(request: Request) -> dict[str, bool]:
     request.session.clear()
     return {"ok": True}
@@ -372,18 +336,27 @@ async def job_status(job_id: str, user: dict[str, str] = Depends(current_user)) 
     return get_job_or_404(job_id)
 
 
+RESULTS_ORDER_BY = {
+    "default": "id",
+    "email_asc": "email ASC, id",
+    "email_desc": "email DESC, id",
+}
+
+
 @app.get(
     "/api/jobs/{job_id}/results",
     tags=["Results"],
     summary="Read verified results (paginated)",
     description="Returns the raw Reacher result objects. Each has an `is_reachable` of "
-    "`safe`/`risky`/`invalid`/`unknown`, plus `mx`, `smtp`, and `debug` details.",
+    "`safe`/`risky`/`invalid`/`unknown`, plus `mx`, `smtp`, and `debug` details. "
+    "Use `sort` to order by email.",
     response_description="`total` matching count and a page of `results`.",
     responses={404: {"description": "Job not found"}},
 )
 async def job_results(
     job_id: str,
     status: str = Query("all", description="Filter: `all`, `safe`, `risky`, `invalid`, or `unknown`."),
+    sort: str = Query("default", description="Order: `default` (insertion), `email_asc`, or `email_desc`."),
     limit: int = Query(200, description="Page size, clamped to 1–500."),
     offset: int = Query(0, description="Number of rows to skip."),
     user: dict[str, str] = Depends(current_user),
@@ -391,6 +364,7 @@ async def job_results(
     get_job_or_404(job_id)
     limit = min(max(limit, 1), 500)
     offset = max(offset, 0)
+    order_by = RESULTS_ORDER_BY.get(sort, "id")
     where = "job_id=?"
     parameters: list[Any] = [job_id]
     if status != "all":
@@ -398,7 +372,7 @@ async def job_results(
         parameters.append(status)
     total = database.fetchone(f"SELECT COUNT(*) AS count FROM results WHERE {where}", tuple(parameters))
     rows = database.fetchall(
-        f"SELECT result_json FROM results WHERE {where} ORDER BY id LIMIT ? OFFSET ?",
+        f"SELECT result_json FROM results WHERE {where} ORDER BY {order_by} LIMIT ? OFFSET ?",
         tuple(parameters + [limit, offset]),
     )
     return {

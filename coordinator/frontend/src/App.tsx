@@ -4,6 +4,8 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ChevronsUpDown,
   CircleAlert,
   Download,
   FileSpreadsheet,
@@ -15,7 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "./api";
-import type { Job, PublicConfig, Reachability, ReacherResult, User } from "./types";
+import type { Job, PublicConfig, Reachability, ReacherResult, ResultSort, User } from "./types";
 
 const filters: Array<{ value: "all" | Reachability; label: string }> = [
   { value: "all", label: "All" },
@@ -480,15 +482,19 @@ function ResultStatus({ status }: { status: Reachability }) {
   return <span className={`result-status ${status}`}><span />{status}</span>;
 }
 
-function ResultsTable({ job, results, total, offset, filter, onFilter, onPage }: {
+function ResultsTable({ job, results, total, offset, filter, sort, onFilter, onPage, onSort }: {
   job: Job;
   results: ReacherResult[];
   total: number;
   offset: number;
   filter: string;
+  sort: ResultSort;
   onFilter: (filter: string) => void;
   onPage: (offset: number) => void;
+  onSort: (sort: ResultSort) => void;
 }) {
+  const nextSort: ResultSort = sort === "default" ? "email_asc" : sort === "email_asc" ? "email_desc" : "default";
+  const sortLabel = sort === "email_asc" ? "ascending" : sort === "email_desc" ? "descending" : "unsorted";
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
   const duration = (result: ReacherResult) => {
@@ -539,7 +545,22 @@ function ResultsTable({ job, results, total, offset, filter, onFilter, onPage }:
       </div>
       <div className="table-scroll">
         <table>
-          <thead><tr><th>Email</th><th>Status</th><th>MX</th><th>SMTP</th><th>Catch-all</th><th>Duration</th></tr></thead>
+          <thead>
+            <tr>
+              <th>
+                <button
+                  type="button"
+                  className={`sort-header ${sort !== "default" ? "active" : ""}`}
+                  onClick={() => onSort(nextSort)}
+                  aria-label={`Sort by email (currently ${sortLabel})`}
+                >
+                  Email
+                  {sort === "email_asc" ? <ChevronUp size={14} /> : sort === "email_desc" ? <ChevronDown size={14} /> : <ChevronsUpDown size={14} />}
+                </button>
+              </th>
+              <th>Status</th><th>MX</th><th>SMTP</th><th>Catch-all</th><th>Duration</th>
+            </tr>
+          </thead>
           <tbody>
             {results.map((result, index) => (
               <tr key={`${result.input}-${index}`}>
@@ -572,6 +593,7 @@ export function App() {
   const [resultsTotal, setResultsTotal] = useState(0);
   const [resultsOffset, setResultsOffset] = useState(0);
   const [filter, setFilter] = useState("all");
+  const [sort, setSort] = useState<ResultSort>("default");
   const [error, setError] = useState("");
 
   const bootstrap = useCallback(async () => {
@@ -613,7 +635,7 @@ export function App() {
       try {
         const [nextJob, nextResults] = await Promise.all([
           api.job(job.id),
-          api.results(job.id, filter, RESULTS_PAGE_SIZE, resultsOffset),
+          api.results(job.id, filter, RESULTS_PAGE_SIZE, resultsOffset, sort),
         ]);
         if (cancelled) return;
         setJob(nextJob);
@@ -627,10 +649,11 @@ export function App() {
     if (job.status === "completed" || job.status === "failed") return () => { cancelled = true; };
     const timer = window.setInterval(refresh, 1000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [job?.id, job?.status, filter, resultsOffset, user]);
+  }, [job?.id, job?.status, filter, sort, resultsOffset, user]);
 
   const openJob = async (jobId: string) => {
     setFilter("all");
+    setSort("default");
     setResults([]);
     setResultsTotal(0);
     setResultsOffset(0);
@@ -656,7 +679,7 @@ export function App() {
         <div className="page-heading">
           <div><h1>Verify email lists</h1><p>Upload a CSV or enter addresses directly; verification is distributed across connected workers.</p></div>
           {job && (
-            <button className="text-button" onClick={() => { setJob(null); setResults([]); setResultsTotal(0); setResultsOffset(0); setFilter("all"); }}>
+            <button className="text-button" onClick={() => { setJob(null); setResults([]); setResultsTotal(0); setResultsOffset(0); setFilter("all"); setSort("default"); }}>
               New job
             </button>
           )}
@@ -675,8 +698,10 @@ export function App() {
               total={resultsTotal}
               offset={resultsOffset}
               filter={filter}
+              sort={sort}
               onFilter={(next) => { setFilter(next); setResultsOffset(0); }}
               onPage={setResultsOffset}
+              onSort={(next) => { setSort(next); setResultsOffset(0); }}
             />
           </>
         )}
