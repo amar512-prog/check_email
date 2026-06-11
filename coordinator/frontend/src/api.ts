@@ -29,6 +29,11 @@ export const api = {
   config: () => request<PublicConfig>("/api/config"),
   me: () => request<{ user: User | null }>("/api/auth/me"),
   developmentLogin: () => request<{ user: User }>("/api/auth/development", { method: "POST" }),
+  passwordLogin: (username: string, password: string) =>
+    request<{ user: User }>("/api/auth/password", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
   googleLogin: (credential: string) =>
     request<{ user: User }>("/api/auth/google", {
       method: "POST",

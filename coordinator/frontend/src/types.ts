@@ -17,6 +17,7 @@ export interface ServerHealth {
 export interface PublicConfig {
   auth_mode: "development" | "google";
   google_client_id: string;
+  password_enabled: boolean;
   max_upload_emails: number;
   servers: ServerHealth[];
 }

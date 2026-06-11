@@ -25,7 +25,14 @@ class Settings:
     pacing_seconds: float
     job_timeout_seconds: float
     unknown_retry_attempts: int
+    api_key: str
+    basic_auth_username: str
+    basic_auth_password: str
     servers: tuple[ReacherServer, ...]
+
+    @property
+    def password_enabled(self) -> bool:
+        return bool(self.basic_auth_username and self.basic_auth_password)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -74,5 +81,8 @@ class Settings:
             pacing_seconds=float(os.environ.get("REACHER_PACING_SECONDS", "60")),
             job_timeout_seconds=float(os.environ.get("REACHER_JOB_TIMEOUT_SECONDS", "900")),
             unknown_retry_attempts=max(0, int(os.environ.get("UNKNOWN_RETRY_ATTEMPTS", "3"))),
+            api_key=os.environ.get("API_KEY", ""),
+            basic_auth_username=os.environ.get("AUTH_USERNAME", ""),
+            basic_auth_password=os.environ.get("AUTH_PASSWORD", ""),
             servers=servers,
         )

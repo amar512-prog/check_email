@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
-from .auth import current_user, verify_google_credential
+from .auth import current_user, validate_basic_credentials, verify_google_credential
 from .config import Settings
 from .coordinator import Coordinator
 from .database import Database
@@ -25,6 +25,7 @@ database = Database(settings.database_path)
 coordinator = Coordinator(settings, database)
 
 app = FastAPI(title="Mailcheck Coordinator", version="0.1.0")
+app.state.settings = settings
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.session_secret,
@@ -41,7 +42,12 @@ class GoogleLogin(BaseModel):
 
 class EmailList(BaseModel):
     emails: list[str]
-    retry_delay_minutes: int = 5
+    retry_delay_minutes: int = 1
+
+
+class PasswordLogin(BaseModel):
+    username: str
+    password: str
 
 
 def retry_delay_to_seconds(minutes: int) -> int:
@@ -53,6 +59,7 @@ async def public_config() -> dict[str, Any]:
     return {
         "auth_mode": settings.auth_mode,
         "google_client_id": settings.google_client_id,
+        "password_enabled": settings.password_enabled,
         "max_upload_emails": settings.max_upload_emails,
         "servers": await coordinator.server_health(),
     }
@@ -68,6 +75,23 @@ async def auth_google(payload: GoogleLogin, request: Request) -> dict[str, Any]:
     if settings.auth_mode != "google":
         raise HTTPException(status_code=404, detail="Google login is not enabled")
     user = verify_google_credential(payload.credential, settings)
+    request.session.clear()
+    request.session["user"] = user
+    return {"user": user}
+
+
+@app.post("/api/auth/password")
+async def auth_password(payload: PasswordLogin, request: Request) -> dict[str, Any]:
+    if not settings.password_enabled:
+        raise HTTPException(status_code=404, detail="Password login is not enabled")
+    if not validate_basic_credentials(payload.username, payload.password, settings):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    user = {
+        "sub": f"user:{payload.username}",
+        "email": payload.username,
+        "name": payload.username,
+        "picture": "",
+    }
     request.session.clear()
     request.session["user"] = user
     return {"user": user}
@@ -140,7 +164,7 @@ def spreadsheet_safe(value: str) -> str:
 @app.post("/api/jobs")
 async def create_job(
     file: UploadFile = File(...),
-    retry_delay_minutes: int = Form(5),
+    retry_delay_minutes: int = Form(1),
     user: dict[str, str] = Depends(current_user),
 ) -> dict[str, Any]:
     filename = file.filename or "emails.csv"

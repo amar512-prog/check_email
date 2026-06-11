@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   Check,
   ChevronDown,
@@ -69,6 +69,10 @@ function GoogleLogin({ config, onLogin }: { config: PublicConfig; onLogin: (user
     document.head.appendChild(script);
   }, [config, onLogin]);
 
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
   const developmentLogin = async () => {
     try {
       setError("");
@@ -76,6 +80,20 @@ function GoogleLogin({ config, onLogin }: { config: PublicConfig; onLogin: (user
       onLogin(response.user);
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : "Login failed");
+    }
+  };
+
+  const passwordLogin = async (event: FormEvent) => {
+    event.preventDefault();
+    try {
+      setError("");
+      setSubmitting(true);
+      const response = await api.passwordLogin(username, password);
+      onLogin(response.user);
+    } catch (loginError) {
+      setError(loginError instanceof Error ? loginError.message : "Login failed");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -92,6 +110,30 @@ function GoogleLogin({ config, onLogin }: { config: PublicConfig; onLogin: (user
             <span className="google-g">G</span>
             Continue locally
           </button>
+        )}
+        {config.password_enabled && (
+          <>
+            <div className="login-divider"><span>or</span></div>
+            <form className="credential-form" onSubmit={passwordLogin}>
+              <input
+                type="text"
+                placeholder="Username"
+                autoComplete="username"
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <button type="submit" className="primary-button" disabled={!username || !password || submitting}>
+                Sign in
+              </button>
+            </form>
+          </>
         )}
         {error && <p className="form-error">{error}</p>}
       </section>
@@ -152,7 +194,7 @@ function UploadWorkspace({
   const [mode, setMode] = useState<"csv" | "manual">("csv");
   const [file, setFile] = useState<File | null>(null);
   const [manualText, setManualText] = useState("");
-  const [retryDelay, setRetryDelay] = useState(5);
+  const [retryDelay, setRetryDelay] = useState(1);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);

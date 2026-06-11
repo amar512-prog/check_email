@@ -38,6 +38,12 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(8, 123, 97, .22)
 .google-fallback { height: 44px; width: 100%; border: 1px solid #cfd6d3; background: #fff; color: var(--ink); border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 12px; font-size: 14px; font-weight: 600; }
 .google-fallback:hover { background: var(--surface); }
 .google-g { color: #4285f4; font-size: 18px; font-weight: 700; }
+.login-divider { display: flex; align-items: center; gap: 12px; margin: 20px 0; color: var(--muted); font-size: 12px; }
+.login-divider::before, .login-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.credential-form { display: flex; flex-direction: column; gap: 10px; text-align: left; }
+.credential-form input { height: 42px; border: 1px solid #cfd6d3; border-radius: 4px; background: #fff; padding: 0 12px; font-size: 14px; }
+.credential-form input:focus { outline: none; border-color: var(--accent); }
+.credential-form .primary-button { margin-top: 2px; }
 
 .app-header { height: 64px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.96); position: sticky; top: 0; z-index: 10; }
 .header-inner { max-width: 1180px; height: 100%; margin: 0 auto; padding: 0 28px; display: flex; align-items: center; justify-content: space-between; }
