@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from collections import defaultdict
 from time import monotonic
@@ -11,6 +12,9 @@ import httpx
 
 from .config import ReacherServer, Settings
 from .database import Database, utc_now
+
+
+logger = logging.getLogger("mailcheck.coordinator")
 
 
 FINAL_REMOTE_STATUSES = {"completed", "failed"}
@@ -78,21 +82,12 @@ class Coordinator:
             )
             if not errors and self.settings.apify_token:
                 # Hand the unknown tail to Apify (MillionVerifier) instead of
-                # retrying on the Reacher servers.
-                await self._resolve_unknowns_with_apify(job_id)
-            else:
-                for attempt in range(1, self.settings.unknown_retry_attempts + 1):
-                    if errors:
-                        break
-                    unknowns = self._unknown_assignments(job_id, attempt)
-                    if not unknowns:
-                        break
-                    self.database.execute(
-                        "UPDATE jobs SET status='retrying', updated_at=? WHERE id=?",
-                        (utc_now(), job_id),
-                    )
-                    await asyncio.sleep(retry_delay_seconds)
-                    errors = await self._dispatch_round(job_id, unknowns)
+                # retrying on the Reacher servers. If Apify fails (e.g. credit
+                # exhausted), fall back to the Reacher retry loop.
+                if not await self._resolve_unknowns_with_apify(job_id):
+                    errors = await self._run_reacher_retries(job_id, retry_delay_seconds)
+            elif not errors:
+                errors = await self._run_reacher_retries(job_id, retry_delay_seconds)
             final_status = "failed" if errors else "completed"
             self.database.execute(
                 "UPDATE jobs SET status=?, error=?, updated_at=? WHERE id=?",
@@ -105,6 +100,24 @@ class Coordinator:
             )
         finally:
             self._tasks.pop(job_id, None)
+
+    async def _run_reacher_retries(self, job_id: str, retry_delay_seconds: int) -> list[str]:
+        """Re-verify the job's unknown tail on the Reacher servers, up to
+        UNKNOWN_RETRY_ATTEMPTS rounds. Returns transport errors, if any."""
+        errors: list[str] = []
+        for attempt in range(1, self.settings.unknown_retry_attempts + 1):
+            unknowns = self._unknown_assignments(job_id, attempt)
+            if not unknowns:
+                break
+            self.database.execute(
+                "UPDATE jobs SET status='retrying', updated_at=? WHERE id=?",
+                (utc_now(), job_id),
+            )
+            await asyncio.sleep(retry_delay_seconds)
+            errors = await self._dispatch_round(job_id, unknowns)
+            if errors:
+                break
+        return errors
 
     def _unknown_assignments(self, job_id: str, attempt: int) -> list[tuple[str, int]]:
         """Assign each unknown email to a server other than the one that
@@ -133,7 +146,10 @@ class Coordinator:
         "error": "unknown",
     }
 
-    async def _resolve_unknowns_with_apify(self, job_id: str) -> None:
+    async def _resolve_unknowns_with_apify(self, job_id: str) -> bool:
+        """Resolve the job's unknown tail via Apify. Returns True on success
+        (including 'nothing to do'), False if the Apify call failed so the
+        caller can fall back to Reacher retries."""
         unknowns = [
             row["email"]
             for row in self.database.fetchall(
@@ -142,21 +158,31 @@ class Coordinator:
             )
         ]
         if not unknowns:
-            return
+            return True
         self.database.execute(
             "UPDATE jobs SET status='retrying', updated_at=? WHERE id=?",
             (utc_now(), job_id),
         )
         try:
             items = await self._apify_verify(unknowns)
-        except Exception:
-            # Leave the unknowns as-is if the fallback fails; the job still
-            # completes with Reacher's verdicts.
-            return
+        except httpx.HTTPStatusError as exc:
+            body = exc.response.text[:300]
+            logger.warning(
+                "Apify verification failed for job %s: HTTP %s %s — falling back to Reacher retries",
+                job_id, exc.response.status_code, body,
+            )
+            return False
+        except Exception as exc:
+            logger.warning(
+                "Apify verification failed for job %s: %s — falling back to Reacher retries",
+                job_id, exc,
+            )
+            return False
         results = [self._apify_to_result(item) for item in items if item.get("email")]
         if results:
             self.database.insert_results(job_id, results)
             self._refresh_job_counts(job_id)
+        return True
 
     async def _apify_verify(self, emails: list[str]) -> list[dict[str, Any]]:
         actor = self.settings.apify_actor_id
