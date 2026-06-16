@@ -76,18 +76,23 @@ class Coordinator:
                 job_id,
                 [(email, index % server_count) for index, email in enumerate(emails)],
             )
-            for attempt in range(1, self.settings.unknown_retry_attempts + 1):
-                if errors:
-                    break
-                unknowns = self._unknown_assignments(job_id, attempt)
-                if not unknowns:
-                    break
-                self.database.execute(
-                    "UPDATE jobs SET status='retrying', updated_at=? WHERE id=?",
-                    (utc_now(), job_id),
-                )
-                await asyncio.sleep(retry_delay_seconds)
-                errors = await self._dispatch_round(job_id, unknowns)
+            if not errors and self.settings.apify_token:
+                # Hand the unknown tail to Apify (MillionVerifier) instead of
+                # retrying on the Reacher servers.
+                await self._resolve_unknowns_with_apify(job_id)
+            else:
+                for attempt in range(1, self.settings.unknown_retry_attempts + 1):
+                    if errors:
+                        break
+                    unknowns = self._unknown_assignments(job_id, attempt)
+                    if not unknowns:
+                        break
+                    self.database.execute(
+                        "UPDATE jobs SET status='retrying', updated_at=? WHERE id=?",
+                        (utc_now(), job_id),
+                    )
+                    await asyncio.sleep(retry_delay_seconds)
+                    errors = await self._dispatch_round(job_id, unknowns)
             final_status = "failed" if errors else "completed"
             self.database.execute(
                 "UPDATE jobs SET status=?, error=?, updated_at=? WHERE id=?",
@@ -117,6 +122,73 @@ class Coordinator:
             last_index = server_index_by_name.get(backend, position)
             assignments.append((row["email"], (last_index + attempt) % server_count))
         return assignments
+
+    # Apify (MillionVerifier) result -> coordinator reachability.
+    APIFY_REACHABILITY = {
+        "ok": "safe",
+        "invalid": "invalid",
+        "disposable": "risky",
+        "catch_all": "risky",
+        "unknown": "unknown",
+        "error": "unknown",
+    }
+
+    async def _resolve_unknowns_with_apify(self, job_id: str) -> None:
+        unknowns = [
+            row["email"]
+            for row in self.database.fetchall(
+                "SELECT email FROM results WHERE job_id=? AND status='unknown' ORDER BY id",
+                (job_id,),
+            )
+        ]
+        if not unknowns:
+            return
+        self.database.execute(
+            "UPDATE jobs SET status='retrying', updated_at=? WHERE id=?",
+            (utc_now(), job_id),
+        )
+        try:
+            items = await self._apify_verify(unknowns)
+        except Exception:
+            # Leave the unknowns as-is if the fallback fails; the job still
+            # completes with Reacher's verdicts.
+            return
+        results = [self._apify_to_result(item) for item in items if item.get("email")]
+        if results:
+            self.database.insert_results(job_id, results)
+            self._refresh_job_counts(job_id)
+
+    async def _apify_verify(self, emails: list[str]) -> list[dict[str, Any]]:
+        actor = self.settings.apify_actor_id
+        url = f"https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items"
+        headers = {"Authorization": f"Bearer {self.settings.apify_token}"}
+        collected: list[dict[str, Any]] = []
+        # run-sync caps at 300s; chunk so a large unknown tail stays well under it.
+        chunk_size = 500
+        async with httpx.AsyncClient(timeout=310) as client:
+            for start in range(0, len(emails), chunk_size):
+                chunk = emails[start : start + chunk_size]
+                response = await client.post(url, headers=headers, json={"emails": chunk})
+                response.raise_for_status()
+                collected.extend(response.json())
+        return collected
+
+    def _apify_to_result(self, item: dict[str, Any]) -> dict[str, Any]:
+        """Shape an Apify/MillionVerifier item like a Reacher result so the
+        results table and CSV export keep working."""
+        verdict = str(item.get("result", "unknown")).lower()
+        reachable = self.APIFY_REACHABILITY.get(verdict, "unknown")
+        return {
+            "input": item.get("email", ""),
+            "is_reachable": reachable,
+            "mx": {"accepts_mail": reachable in {"safe", "risky"}, "records": []},
+            "smtp": {
+                "is_deliverable": reachable == "safe",
+                "is_catch_all": verdict == "catch_all",
+            },
+            "debug": {"backend_name": "apify/millionverifier", "duration": {"secs": 0, "nanos": 0}},
+            "millionverifier": item,
+        }
 
     async def _dispatch_round(self, job_id: str, assignments: list[tuple[str, int]]) -> list[str]:
         allocations: dict[ReacherServer, list[list[str]]] = defaultdict(list)

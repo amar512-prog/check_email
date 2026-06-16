@@ -25,6 +25,8 @@ class Settings:
     pacing_seconds: float
     job_timeout_seconds: float
     unknown_retry_attempts: int
+    apify_token: str
+    apify_actor_id: str
     api_key: str
     basic_auth_username: str
     basic_auth_password: str
@@ -81,6 +83,8 @@ class Settings:
             pacing_seconds=float(os.environ.get("REACHER_PACING_SECONDS", "60")),
             job_timeout_seconds=float(os.environ.get("REACHER_JOB_TIMEOUT_SECONDS", "900")),
             unknown_retry_attempts=max(0, int(os.environ.get("UNKNOWN_RETRY_ATTEMPTS", "3"))),
+            apify_token=os.environ.get("APIFY_TOKEN", ""),
+            apify_actor_id=os.environ.get("APIFY_ACTOR_ID", "account56~email-verifier"),
             api_key=os.environ.get("API_KEY", ""),
             basic_auth_username=os.environ.get("AUTH_USERNAME", ""),
             basic_auth_password=os.environ.get("AUTH_PASSWORD", ""),

@@ -459,7 +459,7 @@ function JobProgress({ job }: { job: Job }) {
       </div>
       <div className="progress-meta"><span>{percent}% complete</span><span>{job.processed.toLocaleString()} of {job.total.toLocaleString()}</span></div>
       {job.status === "retrying" && (
-        <p className="retry-note">Re-checking {job.unknown.toLocaleString()} unknown result{job.unknown === 1 ? "" : "s"} on another server…</p>
+        <p className="retry-note">Re-checking {job.unknown.toLocaleString()} unknown result{job.unknown === 1 ? "" : "s"}…</p>
       )}
       {!!job.servers?.length && (
         <div className="allocation-table">
