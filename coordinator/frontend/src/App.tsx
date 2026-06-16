@@ -503,18 +503,23 @@ function ResultsTable({ job, results, total, offset, filter, sort, onFilter, onP
   };
 
   const downloadCsv = async () => {
+    const url = `/api/jobs/${job.id}/download`;
     try {
       setDownloading(true);
       setDownloadError("");
-      const blob = await api.downloadResults(job.id);
-      const objectUrl = URL.createObjectURL(blob);
+      // Cheap pre-check so auth/availability failures surface as an in-app
+      // error instead of navigating away from the app.
+      const response = await fetch(`/api/jobs/${job.id}`, { credentials: "same-origin" });
+      if (!response.ok) throw new Error(`Download failed (${response.status})`);
+      // Navigate to the real URL so the server's Content-Disposition sets the
+      // filename. A blob URL drops that header, so browsers that ignore the
+      // `download` attribute (iOS Safari, in-app webviews) would otherwise save
+      // a random-named file with no .csv extension.
       const anchor = document.createElement("a");
-      anchor.href = objectUrl;
-      anchor.download = `mailcheck-${job.id}.csv`;
+      anchor.href = url;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
     } catch (error) {
       setDownloadError(error instanceof Error ? error.message : "Could not download results");
     } finally {
