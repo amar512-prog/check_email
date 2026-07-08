@@ -10,7 +10,10 @@ class ReacherServer:
     name: str
     url: str
     secret: str
-    emails_per_minute: int = 50
+    # Batch size per server. Keep this at or below the worker's
+    # RCH__THROTTLE__MAX_REQUESTS_PER_MINUTE (currently 40) so a batch can
+    # clear within REACHER_JOB_TIMEOUT_SECONDS instead of tripping the timeout.
+    emails_per_minute: int = 40
 
 
 @dataclass(frozen=True)
@@ -49,7 +52,7 @@ class Settings:
                 name=item["name"],
                 url=item["url"].rstrip("/"),
                 secret=item["secret"],
-                emails_per_minute=max(1, int(item.get("emails_per_minute", 50))),
+                emails_per_minute=max(1, int(item.get("emails_per_minute", 40))),
             )
             for item in server_items
         )

@@ -131,13 +131,22 @@ impl Throttle {
 		self.requests_per_day += 1;
 	}
 
+	fn delay_until_reset(window: Duration, elapsed: Duration) -> Duration {
+		// The window can expire between reset_if_needed's clock read and the
+		// delay calculation; a plain `window - elapsed` underflows and panics.
+		window.saturating_sub(elapsed)
+	}
+
 	fn should_throttle(&self, config: &ThrottleConfig) -> Option<ThrottleResult> {
 		let now = Instant::now();
 
 		if let Some(max_per_second) = config.max_requests_per_second {
 			if self.requests_per_second >= max_per_second {
 				return Some(ThrottleResult {
-					delay: Duration::from_secs(1) - now.duration_since(self.last_reset_second),
+					delay: Self::delay_until_reset(
+						Duration::from_secs(1),
+						now.duration_since(self.last_reset_second),
+					),
 					limit_type: ThrottleLimit::PerSecond,
 				});
 			}
@@ -146,7 +155,10 @@ impl Throttle {
 		if let Some(max_per_minute) = config.max_requests_per_minute {
 			if self.requests_per_minute >= max_per_minute {
 				return Some(ThrottleResult {
-					delay: Duration::from_secs(60) - now.duration_since(self.last_reset_minute),
+					delay: Self::delay_until_reset(
+						Duration::from_secs(60),
+						now.duration_since(self.last_reset_minute),
+					),
 					limit_type: ThrottleLimit::PerMinute,
 				});
 			}
@@ -155,7 +167,10 @@ impl Throttle {
 		if let Some(max_per_hour) = config.max_requests_per_hour {
 			if self.requests_per_hour >= max_per_hour {
 				return Some(ThrottleResult {
-					delay: Duration::from_secs(3600) - now.duration_since(self.last_reset_hour),
+					delay: Self::delay_until_reset(
+						Duration::from_secs(3600),
+						now.duration_since(self.last_reset_hour),
+					),
 					limit_type: ThrottleLimit::PerHour,
 				});
 			}
@@ -164,7 +179,10 @@ impl Throttle {
 		if let Some(max_per_day) = config.max_requests_per_day {
 			if self.requests_per_day >= max_per_day {
 				return Some(ThrottleResult {
-					delay: Duration::from_secs(86400) - now.duration_since(self.last_reset_day),
+					delay: Self::delay_until_reset(
+						Duration::from_secs(86400),
+						now.duration_since(self.last_reset_day),
+					),
 					limit_type: ThrottleLimit::PerDay,
 				});
 			}
@@ -235,5 +253,22 @@ mod tests {
 
 		// Should allow more requests
 		assert_eq!(manager.check_throttle().await, None);
+	}
+
+	#[test]
+	fn test_throttle_delay_does_not_underflow_after_window_elapsed() {
+		let windows = [
+			Duration::from_secs(1),
+			Duration::from_secs(60),
+			Duration::from_secs(3600),
+			Duration::from_secs(86400),
+		];
+
+		for window in windows {
+			assert_eq!(
+				Throttle::delay_until_reset(window, window + Duration::from_secs(1)),
+				Duration::from_secs(0)
+			);
+		}
 	}
 }

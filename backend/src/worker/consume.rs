@@ -140,6 +140,12 @@ async fn consume_check_email(config: Arc<BackendConfig>) -> Result<(), anyhow::E
 							.reject(BasicRejectOptions { requeue: true })
 							.await?;
 						debug!(target: LOG_TARGET, email=payload.input.to_email, job_id=?payload.job_id, "Requeued message because of throttling");
+
+						// Wait out the throttle window before fetching again.
+						// Without this the loop spins in a fetch/requeue cycle
+						// (hundreds of deliveries per second) until the window
+						// resets, hammering RabbitMQ for no work.
+						tokio::time::sleep(throttle_result.delay).await;
 					}
 				}
 

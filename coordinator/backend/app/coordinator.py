@@ -247,7 +247,18 @@ class Coordinator:
     ) -> None:
         for batch_number, batch in enumerate(batches, start=1):
             started = monotonic()
-            await self._run_batch(job_id, server, batch_number, batch)
+            try:
+                await self._run_batch(job_id, server, batch_number, batch)
+            except Exception as exc:
+                # A single batch timing out or 500-ing must not abort this
+                # server's remaining batches or fail the whole job. The subjob
+                # is already recorded as failed in _run_batch; log and move on.
+                # Emails in this batch simply have no result row and can be
+                # picked up by a later re-run.
+                logger.warning(
+                    "%s batch %d failed for job %s: %s — continuing with remaining batches",
+                    server.name, batch_number, job_id, exc,
+                )
             if batch_number < len(batches) and self.settings.pacing_seconds > 0:
                 elapsed = monotonic() - started
                 await asyncio.sleep(max(0, self.settings.pacing_seconds - elapsed))
