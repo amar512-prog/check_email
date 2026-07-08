@@ -14,5 +14,12 @@ hotmail.jpeg
 run.sh
 .env
 
+# Local Mailcheck CSV exports and split batches.
+/batch_*_minus_safe_invalid_risky*.csv
+/emails_unknown_or_not_in_output.csv
+/input_emails_minus_safe_invalid_risky*.csv
+/mailcheck_outputs_merged*.csv
+/unknown_or_not_in_output_emails.csv
+
 # Local multi-server simulation only, not a deployment file
 docker-compose.worker2.yml
