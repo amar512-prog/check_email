@@ -1,28 +1,44 @@
 from __future__ import annotations
 
-import csv
-import io
-import json
-import re
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
+from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from pydantic import BaseModel, Field
+from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from .auth import current_user, validate_basic_credentials, verify_google_credential
-from .config import Settings
-from .coordinator import Coordinator
-from .database import Database
+from .mcp_auth import oauth_router
+from .mcp_server import mcp
+from .services import (
+    coordinator,
+    database,
+    get_job_or_404,
+    normalize_emails,
+    parse_email_csv,
+    query_results,
+    results_csv,
+    retry_delay_to_seconds,
+    settings,
+)
+
+# Build the MCP Starlette app once. This lazily creates the streamable-HTTP
+# session manager and the OAuth + /mcp routes; we then lift those routes onto
+# the FastAPI app below so OAuth discovery lives at the site root.
+mcp_app = mcp.streamable_http_app()
 
 
-EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
-settings = Settings.from_env()
-database = Database(settings.database_path)
-coordinator = Coordinator(settings, database)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # The MCP endpoint needs its session manager running for the app's lifetime.
+    async with mcp.session_manager.run():
+        yield
 
 API_DESCRIPTION = """
 **Mailcheck** distributes email-list verification across one or more Reacher
@@ -71,6 +87,7 @@ app = FastAPI(
     description=API_DESCRIPTION,
     openapi_tags=OPENAPI_TAGS,
     swagger_ui_parameters={"defaultModelsExpandDepth": 0},
+    lifespan=lifespan,
 )
 app.state.settings = settings
 app.add_middleware(
@@ -81,6 +98,18 @@ app.add_middleware(
     https_only=settings.session_secure,
     max_age=60 * 60 * 12,
 )
+
+# --- MCP server wiring -------------------------------------------------------
+# Lift the MCP + OAuth routes (built above) onto this app so /mcp and the OAuth
+# discovery documents are served from the site root. Added before the frontend
+# catch-all further down, so they take precedence. When auth is enabled we also
+# install the bearer middleware (so /mcp validates tokens and tools can read the
+# caller's identity) and the Google-backed login routes.
+app.router.routes.extend(mcp_app.routes)
+if mcp._token_verifier is not None:
+    app.add_middleware(AuthContextMiddleware)
+    app.add_middleware(AuthenticationMiddleware, backend=BearerAuthBackend(mcp._token_verifier))
+    app.include_router(oauth_router)
 
 
 class GoogleLogin(BaseModel):
@@ -111,10 +140,6 @@ class PasswordLogin(BaseModel):
     password: str = Field(..., description="The configured AUTH_PASSWORD.")
 
     model_config = {"json_schema_extra": {"example": {"username": "admin", "password": "your-password"}}}
-
-
-def retry_delay_to_seconds(minutes: int) -> int:
-    return max(1, min(15, minutes)) * 60
 
 
 @app.get("/api/config", include_in_schema=False)
@@ -181,49 +206,6 @@ async def auth_logout(request: Request) -> dict[str, bool]:
     return {"ok": True}
 
 
-def normalize_emails(values: list[str]) -> tuple[list[str], int]:
-    emails: list[str] = []
-    seen: set[str] = set()
-    rejected = 0
-    for raw in values:
-        value = raw.strip().lower()
-        if not value:
-            continue
-        if not EMAIL_PATTERN.match(value):
-            rejected += 1
-            continue
-        if value not in seen:
-            seen.add(value)
-            emails.append(value)
-
-    if not emails:
-        raise HTTPException(status_code=400, detail="No valid email addresses found")
-    if len(emails) > settings.max_upload_emails:
-        raise HTTPException(
-            status_code=400,
-            detail=f"More than {settings.max_upload_emails} unique emails were provided",
-        )
-    return emails, rejected
-
-
-def parse_email_csv(content: bytes) -> tuple[list[str], int]:
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="CSV file is larger than 10 MB")
-    try:
-        text = content.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=400, detail="CSV must use UTF-8 encoding") from exc
-
-    values = [row[0] for row in csv.reader(io.StringIO(text)) if row]
-    if values and values[0].strip().lower() in {"email", "email_address", "to_email"}:
-        values = values[1:]
-    return normalize_emails(values)
-
-
-def spreadsheet_safe(value: str) -> str:
-    return f"'{value}" if value.startswith(("=", "+", "-", "@")) else value
-
-
 @app.post(
     "/api/jobs",
     tags=["Jobs"],
@@ -282,24 +264,6 @@ async def create_job_from_emails(
     return {"job_id": job_id, "accepted": len(emails), "rejected": rejected}
 
 
-def get_job_or_404(job_id: str) -> dict[str, Any]:
-    # Jobs are shared across all signed-in users.
-    job = database.fetchone("SELECT * FROM jobs WHERE id=?", (job_id,))
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    job["servers"] = database.fetchall(
-        """
-        SELECT server_name, SUM(total) AS total, SUM(processed) AS processed,
-               COUNT(*) AS batches,
-               SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed_batches,
-               MAX(CASE WHEN status='failed' THEN error END) AS error
-        FROM subjobs WHERE job_id=? GROUP BY server_name ORDER BY server_name
-        """,
-        (job_id,),
-    )
-    return job
-
-
 @app.get(
     "/api/jobs",
     tags=["Jobs"],
@@ -336,13 +300,6 @@ async def job_status(job_id: str, user: dict[str, str] = Depends(current_user)) 
     return get_job_or_404(job_id)
 
 
-RESULTS_ORDER_BY = {
-    "default": "id",
-    "email_asc": "email ASC, id",
-    "email_desc": "email DESC, id",
-}
-
-
 @app.get(
     "/api/jobs/{job_id}/results",
     tags=["Results"],
@@ -361,24 +318,7 @@ async def job_results(
     offset: int = Query(0, description="Number of rows to skip."),
     user: dict[str, str] = Depends(current_user),
 ) -> dict[str, Any]:
-    get_job_or_404(job_id)
-    limit = min(max(limit, 1), 500)
-    offset = max(offset, 0)
-    order_by = RESULTS_ORDER_BY.get(sort, "id")
-    where = "job_id=?"
-    parameters: list[Any] = [job_id]
-    if status != "all":
-        where += " AND status=?"
-        parameters.append(status)
-    total = database.fetchone(f"SELECT COUNT(*) AS count FROM results WHERE {where}", tuple(parameters))
-    rows = database.fetchall(
-        f"SELECT result_json FROM results WHERE {where} ORDER BY {order_by} LIMIT ? OFFSET ?",
-        tuple(parameters + [limit, offset]),
-    )
-    return {
-        "total": int((total or {}).get("count") or 0),
-        "results": [json.loads(row["result_json"]) for row in rows],
-    }
+    return query_results(job_id, status=status, sort=sort, limit=limit, offset=offset)
 
 
 @app.get(
@@ -391,29 +331,7 @@ async def job_results(
     responses={404: {"description": "Job not found"}},
 )
 async def download_results(job_id: str, user: dict[str, str] = Depends(current_user)) -> StreamingResponse:
-    get_job_or_404(job_id)
-    rows = database.fetchall(
-        "SELECT email, status, result_json FROM results WHERE job_id=? ORDER BY id",
-        (job_id,),
-    )
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["email", "status", "accepts_mail", "smtp_deliverable", "catch_all", "duration_seconds"])
-    for row in rows:
-        result = json.loads(row["result_json"])
-        duration = result.get("debug", {}).get("duration", {})
-        seconds = float(duration.get("secs", 0)) + float(duration.get("nanos", 0)) / 1_000_000_000
-        writer.writerow(
-            [
-                spreadsheet_safe(row["email"]),
-                row["status"],
-                result.get("mx", {}).get("accepts_mail", False),
-                result.get("smtp", {}).get("is_deliverable", False),
-                result.get("smtp", {}).get("is_catch_all", False),
-                f"{seconds:.3f}",
-            ]
-        )
-    response = StreamingResponse(iter([output.getvalue()]), media_type="text/csv")
+    response = StreamingResponse(iter([results_csv(job_id)]), media_type="text/csv")
     response.headers["Content-Disposition"] = f'attachment; filename="mailcheck-{job_id}.csv"'
     return response
 
