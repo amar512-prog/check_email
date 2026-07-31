@@ -344,6 +344,11 @@ if frontend_dist.exists():
     async def frontend(path: str) -> FileResponse:
         if path.startswith("api/"):
             raise HTTPException(status_code=404, detail="API route not found")
+        # Never answer OAuth/MCP discovery probes with the SPA's index.html — a
+        # client fetching an unmapped /.well-known/* path must get a clean 404,
+        # not HTML it would try (and fail) to parse as metadata.
+        if path.startswith(".well-known/"):
+            raise HTTPException(status_code=404, detail="Not found")
         requested = (frontend_dist / path).resolve()
         try:
             requested.relative_to(frontend_dist.resolve())

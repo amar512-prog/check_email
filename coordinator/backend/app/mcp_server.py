@@ -21,6 +21,7 @@ from typing import Any
 from fastapi import HTTPException
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from . import services
 from .mcp_auth import build_auth
@@ -40,6 +41,13 @@ mcp = FastMCP(
     ),
     auth_server_provider=_auth_provider,
     auth=_auth_settings,
+    # This server is public, OAuth-protected, and sits behind a trusted reverse
+    # proxy that terminates TLS and forwards over HTTP/1.0 to 127.0.0.1. FastMCP
+    # would otherwise auto-enable DNS-rebinding protection (because the default
+    # bind host is loopback) and reject legitimate clients like claude.ai with a
+    # 421 Misdirected Request. That protection targets localhost dev servers and
+    # ambient-cookie auth; it does not apply to a bearer-token API, so disable it.
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
 
