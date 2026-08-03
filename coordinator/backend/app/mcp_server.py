@@ -34,10 +34,18 @@ _auth_provider, _auth_settings = build_auth()
 mcp = FastMCP(
     "mailcheck",
     instructions=(
-        "Verify whether email addresses exist without sending mail. Submit a job "
-        "with verify_emails (or verify_csv), then poll get_job until it is "
-        "completed, and read get_results. For a single blocking call use "
-        "verify_and_wait. Each address resolves to safe / risky / invalid / unknown."
+        "Verify whether email addresses exist without sending mail. "
+        "PREFERRED WORKFLOW: call verify_emails (or verify_csv) — it returns a "
+        "job_id immediately — then poll get_job until status is completed/failed "
+        "and read get_results. Use this for anything bulk or that may take more "
+        "than a few seconds. "
+        "verify_and_wait is a convenience that blocks and polls for you, but only "
+        "use it for a handful of addresses you expect to resolve in well under a "
+        "minute: MCP clients cancel long-running tool calls, and server-side "
+        "pacing plus retries of 'unknown' results can push even small jobs past "
+        "that limit. If verify_and_wait returns timed_out=true, do NOT resubmit — "
+        "keep the job_id and poll get_job/get_results. "
+        "Each address resolves to safe / risky / invalid / unknown."
     ),
     auth_server_provider=_auth_provider,
     auth=_auth_settings,
@@ -98,15 +106,16 @@ def _trim(result: dict[str, Any]) -> dict[str, Any]:
 
 @mcp.tool()
 def verify_emails(emails: list[str], retry_delay_minutes: int = 1) -> dict[str, Any]:
-    """Create a verification job from a list of email addresses.
+    """Create a verification job from a list of email addresses (returns immediately).
 
-    Duplicates and syntactically invalid addresses are dropped. Returns the
-    ``job_id`` plus how many addresses were ``accepted`` / ``rejected``. Poll
-    ``get_job`` until it is ``completed``, then read ``get_results`` — or use
-    ``verify_and_wait`` to do both in one call.
+    This is the recommended way to submit — especially for bulk lists or anything
+    that may take more than a few seconds. It returns a ``job_id`` right away;
+    poll ``get_job`` until ``completed``/``failed`` and read ``get_results``.
+    Duplicates and syntactically invalid addresses are dropped; the response also
+    reports how many were ``accepted`` / ``rejected``.
 
     Args:
-        emails: Email addresses to verify.
+        emails: Email addresses to verify (up to the server's max_upload_emails).
         retry_delay_minutes: Minutes to wait before re-verifying any ``unknown``
             results on a different server (1–15, default 1).
     """
@@ -123,12 +132,13 @@ def verify_emails(emails: list[str], retry_delay_minutes: int = 1) -> dict[str, 
 
 @mcp.tool()
 def verify_csv(path: str, retry_delay_minutes: int = 1) -> dict[str, Any]:
-    """Create a verification job from a local CSV file.
+    """Create a verification job from a local CSV file (returns immediately).
 
-    The CSV's first column must hold email addresses (a header row named
-    email/email_address/to_email is skipped). Max 10 MB and
-    ``max_upload_emails`` unique addresses. Returns the ``job_id`` with
-    ``accepted`` / ``rejected`` counts.
+    The recommended way to submit a bulk list. The CSV's first column must hold
+    email addresses (a header row named email/email_address/to_email is skipped).
+    Max 10 MB and ``max_upload_emails`` unique addresses. Returns the ``job_id``
+    with ``accepted`` / ``rejected`` counts; then poll ``get_job`` and read
+    ``get_results``.
 
     Args:
         path: Absolute path to a CSV file on the machine running the coordinator.
@@ -248,20 +258,28 @@ async def verify_and_wait(
     emails: list[str],
     retry_delay_minutes: int = 1,
     poll_interval_seconds: int = 5,
-    timeout_seconds: int = 1800,
+    timeout_seconds: int = 120,
 ) -> dict[str, Any]:
-    """Verify a list of emails and block until the job finishes (or times out).
+    """Verify a FEW emails and block until the job finishes (convenience only).
 
-    Creates a job, polls until it is ``completed`` or ``failed``, then returns a
-    per-category summary plus the first page (up to 200) of trimmed results. This
-    is the most convenient entry point for one-shot verification.
+    Only use this for a handful of addresses you expect to resolve quickly. For
+    bulk lists, or anything that may take more than ~a minute, use verify_emails /
+    verify_csv and poll get_job instead — MCP clients cancel long-running tool
+    calls, and server-side pacing plus 'unknown' retries can exceed that limit.
+
+    Creates a job, polls until ``completed``/``failed``, then returns a
+    per-category summary plus the first page (up to 200) of trimmed results. If it
+    doesn't finish within ``timeout_seconds`` it returns early with
+    ``timed_out=true`` and the ``job_id`` — the job keeps running server-side, so
+    do NOT resubmit; poll get_job / get_results with that job_id.
 
     Args:
         emails: Email addresses to verify.
         retry_delay_minutes: Minutes between retry rounds for ``unknown`` results (1–15).
         poll_interval_seconds: How often to re-check job status (clamped to 1–60).
-        timeout_seconds: Give up waiting after this many seconds (clamped to 10–7200);
-            the job keeps running server-side and can still be polled with get_job.
+        timeout_seconds: Give up waiting after this many seconds (clamped to 10–7200).
+            Keep this well below your MCP client's tool-call timeout so the tool can
+            return the job_id gracefully instead of the client cancelling the call.
     """
     created = verify_emails(emails, retry_delay_minutes=retry_delay_minutes)
     job_id = created["job_id"]
@@ -276,6 +294,10 @@ async def verify_and_wait(
             summary["timed_out"] = True
             summary["accepted"] = created["accepted"]
             summary["rejected"] = created["rejected"]
+            summary["next"] = (
+                f"Still running server-side. Do not resubmit. Poll get_job('{job_id}') "
+                f"until completed, then get_results('{job_id}')."
+            )
             return summary
         await asyncio.sleep(poll_interval_seconds)
         job = get_job_or_404(job_id)
